@@ -6,14 +6,14 @@
 
     <groupId>ru</groupId>
     <artifactId>UtilityCalcBot</artifactId>
-    <version>1.0-SNAPSHOT</version>
+    <version>1.0</version>
 
     <dependencies>
-    <dependency>
-        <groupId>org.telegram</groupId>
-        <artifactId>telegrambots</artifactId>
-        <version>6.8.0</version>
-    </dependency>
+        <dependency>
+            <groupId>org.telegram</groupId>
+            <artifactId>telegrambots</artifactId>
+            <version>6.8.0</version>
+        </dependency>
     </dependencies>
 
     <properties>
@@ -43,7 +43,7 @@
                     </descriptorRefs>
                     <archive>
                         <manifest>
-                            <mainClass>UtilityCalcBotApplication</mainClass>
+                            <mainClass>ru.UtilityCalcBotApplication</mainClass>
                         </manifest>
                     </archive>
                 </configuration>
