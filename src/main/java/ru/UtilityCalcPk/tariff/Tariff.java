@@ -12,8 +12,21 @@ public class Tariff {
     private LocalDate startDate;     // StartDate
     private LocalDate endDate;       // EndDate
     private BigDecimal value;        // TariffValue
+    private String providerShort;
 
     public Tariff() {
+    }
+
+    public Tariff(ServiceType service, String region, String provider, String unit, boolean byMeter, LocalDate startDate, LocalDate endDate, BigDecimal value, String providerShort) {
+        this.service = service;
+        this.region = region;
+        this.provider = provider;
+        this.unit = unit;
+        this.byMeter = byMeter;
+        this.startDate = startDate;
+        this.endDate = endDate;
+        this.value = value;
+        this.providerShort = providerShort;
     }
 
     public Tariff(ServiceType service,
@@ -60,4 +73,12 @@ public class Tariff {
 
     public BigDecimal getValue() { return value; }
     public void setValue(BigDecimal value) { this.value = value; }
+
+    public String getProviderShort() {
+        return providerShort;
+    }
+
+    public void setProviderShort(String providerShort) {
+        this.providerShort = providerShort;
+    }
 }

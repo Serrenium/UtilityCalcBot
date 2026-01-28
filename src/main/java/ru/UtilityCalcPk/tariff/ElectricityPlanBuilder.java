@@ -28,6 +28,7 @@ public class ElectricityPlanBuilder {
             plan.setType(k.planType);
             plan.setStoveType(k.stoveType);
             plan.setProvider(k.agency);
+            plan.setProviderShort(ProviderNames.shortName(k.agency));
             plan.setRegion(k.region);
             plan.setStartDate(k.startDate);
             plan.setEndDate(k.endDate);
@@ -57,7 +58,6 @@ public class ElectricityPlanBuilder {
                     }
                 }
             }
-
             result.add(plan);
         }
 

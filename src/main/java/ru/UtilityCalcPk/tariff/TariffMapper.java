@@ -72,6 +72,7 @@ public class TariffMapper {
         t.setService(service);
         t.setRegion(c.getRegion());
         t.setProvider(c.getAgency());
+        t.setProviderShort(ProviderNames.shortName(c.getAgency()));
         t.setUnit(c.getUnitOfMeasure());
         t.setByMeter(mapByMeter(c.getMeasureDeviceAvail()));
         t.setStartDate(parseDate(c.getStartDate()));

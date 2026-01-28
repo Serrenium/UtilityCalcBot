@@ -12,6 +12,7 @@ public class ElectricityPlan {
     private String region;
     private LocalDate startDate;
     private LocalDate endDate;
+    private String providerShort;
 
     // 1..3 тарифа по зонам
     private BigDecimal dayTariff;   // или zone1
@@ -90,5 +91,13 @@ public class ElectricityPlan {
 
     public void setStoveType(String stoveType) {
         this.stoveType = stoveType;
+    }
+
+    public String getProviderShort() {
+        return providerShort;
+    }
+
+    public void setProviderShort(String providerShort) {
+        this.providerShort = providerShort;
     }
 }
