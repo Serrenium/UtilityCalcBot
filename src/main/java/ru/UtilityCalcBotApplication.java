@@ -3,6 +3,7 @@ package ru;
 import org.telegram.telegrambots.meta.TelegramBotsApi;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.updatesreceivers.DefaultBotSession;
+import ru.UtilityCalcPk.tariff.MosRuTariffLoader;
 import ru.UtilityCalcPk.tariff.TariffRepository;
 import ru.UtilityCalcPk.tariff.TariffService;
 
@@ -12,8 +13,10 @@ public class UtilityCalcBotApplication {
             // 1. Репозиторий тарифов
             TariffRepository repo = new TariffRepository();
 
-            // 2. (позже) загрузка тарифов в repo
-            // MosRuTariffLoader.load(repo);  // здесь будет твой код загрузки
+            // 2. Загрузка тарифов
+            System.out.println("Старт загрузки тарифов с mos.ru");
+            MosRuTariffLoader.load(repo);
+            System.out.println("Загрузка тарифов завершена");
 
             // 3. Сервис тарифов
             TariffService tariffService = new TariffService(repo);
@@ -25,7 +28,7 @@ public class UtilityCalcBotApplication {
             var botsApi = new TelegramBotsApi(DefaultBotSession.class);
             botsApi.registerBot(bot);
             System.out.println("UtilityCalcBot запущен!");
-        } catch (TelegramApiException e) {
+        } catch (Exception e) {
             e.printStackTrace();
         }
     }
