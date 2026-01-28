@@ -14,9 +14,9 @@ public class UtilityCalcBotApplication {
             TariffRepository repo = new TariffRepository();
 
             // 2. Загрузка тарифов
-            System.out.println("Старт загрузки тарифов с mos.ru");
+            System.out.println("Start requesting tariffs to mos.ru");
             MosRuTariffLoader.load(repo);
-            System.out.println("Загрузка тарифов завершена");
+            System.out.println("Tariff loading complete");
 
             // 3. Сервис тарифов
             TariffService tariffService = new TariffService(repo);
@@ -27,7 +27,7 @@ public class UtilityCalcBotApplication {
             // 5. Регистрация бота
             var botsApi = new TelegramBotsApi(DefaultBotSession.class);
             botsApi.registerBot(bot);
-            System.out.println("UtilityCalcBot запущен!");
+            System.out.println("UtilityCalcBot started!");
         } catch (Exception e) {
             e.printStackTrace();
         }

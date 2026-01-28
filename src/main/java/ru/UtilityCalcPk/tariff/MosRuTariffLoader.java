@@ -37,7 +37,7 @@ public class MosRuTariffLoader {
                 request, HttpResponse.BodyHandlers.ofString());
 
         if (response.statusCode() != 200) {
-            System.out.println("Ошибка загрузки mos.ru: " + response.statusCode());
+            System.out.println("Error requesting mos.ru: " + response.statusCode());
             System.out.println(response.body());
             return;
         }
@@ -107,7 +107,7 @@ public class MosRuTariffLoader {
             elecCount++;
         }
 
-        System.out.println("MosRuTariffLoader: загружено тарифов воды/водоотведения = " + waterCount);
-        System.out.println("MosRuTariffLoader: загружено электро планов = " + elecCount);
+        System.out.println("MosRuTariffLoader: water tariffs loaded = " + waterCount);
+        System.out.println("MosRuTariffLoader: electricity tariffs loaded = " + elecCount);
     }
 }
