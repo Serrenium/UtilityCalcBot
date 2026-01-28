@@ -1,10 +1,19 @@
 package ru;
+
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
+import ru.UtilityCalcPk.tariff.TariffService;
 
 public class UtilityCalc extends TelegramLongPollingBot {
+
+    private final TariffService tariffService;
+
+    public UtilityCalc(TariffService tariffService) {
+        this.tariffService = tariffService;
+    }
+
     @Override
     public String getBotUsername() {
         return "Utility_calc_bot";
@@ -17,30 +26,39 @@ public class UtilityCalc extends TelegramLongPollingBot {
 
     @Override
     public void onUpdateReceived(Update update) {
-        if (update.hasMessage() && update.getMessage().hasText()) {
-            String text = update.getMessage().getText();
-            String chatId = update.getMessage().getChatId().toString();
+        if (!update.hasMessage() || !update.getMessage().hasText()) {
+            return;
+        }
 
-            SendMessage msg = new SendMessage();
-            msg.setChatId(chatId);
+        String text = update.getMessage().getText();
+        String chatId = update.getMessage().getChatId().toString();
 
-            if (text.equals("/calc")) {
-                msg.setText("Введите: горячая вода(м3), холодная вода(м3), свет(кВтч)\nПример: 50,10,200");
-            } else if (text.matches("\\d+[,]\\d+[,]\\d+")) {
-                String[] parts = text.split(",");
-                double area = Double.parseDouble(parts[0]);
-                double water = Double.parseDouble(parts[1]);
-                double power = Double.parseDouble(parts[2]);
-                double total = area * 50 + water * 40 + power * 5.5; // Пример тарифов Москва
-                msg.setText(String.format("Итого: %.2f ₽", total));
-            } else {
-                msg.setText("Команды: /calc - расчёт ЖКУ");
-            }
-            try {
-                execute(msg);
-            } catch (TelegramApiException e) {
-                e.printStackTrace();
-            }
+        SendMessage msg = new SendMessage();
+        msg.setChatId(chatId);
+
+        if (text.equals("/calc")) {
+            msg.setText("Введите: горячая вода(м3), холодная вода(м3), свет(кВтч)\nПример: 50,10,200");
+        } else if (text.equals("/tariffs")) {
+            // новая команда: показать текущие тарифы
+            String tariffsText = tariffService.formatTodayTariffsForBot();
+            msg.setText(tariffsText);
+        } else if (text.matches("\\d+[,]\\d+[,]\\d+")) {
+            String[] parts = text.split(",");
+            double hot = Double.parseDouble(parts[0]);
+            double cold = Double.parseDouble(parts[1]);
+            double power = Double.parseDouble(parts[2]);
+
+            // пока оставим старый пример расчёта, позже заменим на реальные тарифы из tariffService
+            double total = hot * 40 + cold * 30 + power * 5.5;
+            msg.setText(String.format("Итого: %.2f ₽", total));
+        } else {
+            msg.setText("Команды: /calc - расчёт ЖКУ, /tariffs - текущие тарифы");
+        }
+
+        try {
+            execute(msg);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
         }
     }
 }
