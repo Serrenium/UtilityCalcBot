@@ -18,9 +18,9 @@ public class TariffService {
     public String formatTodayTariffsForBot() {
         LocalDate today = LocalDate.now();
         StringBuilder sb = new StringBuilder();
-        sb.append("Текущие тарифы ЖКУ (").append(today).append("):\n\n");
+        sb.append("Актуальные тарифы ЖКУ (mos.ru):\n\n");
 
-        // сгруппуем по услуге
+        // сгруппируем по услуге
         List<Tariff> active = repository.findActiveByDate(today);
 
         for (ServiceType serviceType : List.of(ServiceType.WATER_COLD, ServiceType.WATER_HOT, ServiceType.SEWERAGE)) {
@@ -62,7 +62,7 @@ public class TariffService {
         List<ElectricityPlan> plans = repository.findActiveElectricityPlans(date);
         if (plans.isEmpty()) return;
 
-        sb.append("Электроэнергия\n");
+        sb.append("Электроэнергия ");
 
         // сгруппуем по поставщику
         Map<String, List<ElectricityPlan>> byProvider = plans.stream()

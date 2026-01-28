@@ -4,14 +4,18 @@ import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
+import ru.UtilityCalcPk.flat.Flat;
+import ru.UtilityCalcPk.flat.FlatRepository;
 import ru.UtilityCalcPk.tariff.TariffService;
 
 public class UtilityCalc extends TelegramLongPollingBot {
 
     private final TariffService tariffService;
+    private final FlatRepository flatRepository;
 
-    public UtilityCalc(TariffService tariffService) {
+    public UtilityCalc(TariffService tariffService, FlatRepository flatRepository) {
         this.tariffService = tariffService;
+        this.flatRepository = flatRepository;
     }
 
     @Override
@@ -37,7 +41,16 @@ public class UtilityCalc extends TelegramLongPollingBot {
         msg.setChatId(chatId);
 
         if (text.equals("/calc")) {
-            msg.setText("Введите: горячая вода(м3), холодная вода(м3), свет(кВтч)\nПример: 50,10,200");
+            Long chatIdLong = update.getMessage().getChatId();
+
+            if (!flatRepository.hasFlats(chatIdLong)) {
+                msg.setText("Пока нет ни одной квартиры.\n" +
+                        "Добавьте квартиру командой /addflat.");
+            } else {
+                msg.setText("Введите: горячая вода(м3), холодная вода(м3), свет(кВт·ч)\n" +
+                        "Пример: 50,10,200");
+            }
+
         } else if (text.equals("/tariffs")) {
             // новая команда: показать текущие тарифы
             String tariffsText = tariffService.formatTodayTariffsForBot();
@@ -51,8 +64,19 @@ public class UtilityCalc extends TelegramLongPollingBot {
             // пока оставим старый пример расчёта, позже заменим на реальные тарифы из tariffService
             double total = hot * 40 + cold * 30 + power * 5.5;
             msg.setText(String.format("Итого: %.2f ₽", total));
-        } else {
-            msg.setText("Команды: /calc - расчёт ЖКУ, /tariffs - текущие тарифы");
+        } else if (text.equals("/addflat")) {
+            Flat flat = new Flat();
+            flat.setChatId(update.getMessage().getChatId());
+            flat.setName("Моя квартира");
+            flat.setProviderShort("Мосэнергосбыт"); // временно, потом сделаем выбор
+            flat.setStoveType("газовая плита");
+            flatRepository.save(flat);
+
+            msg.setText("Квартира добавлена: " + flat.getName());
+        }
+        else
+        {
+            msg.setText("Команды: /calc - расчёт ЖКУ, /tariffs - актуальные тарифы");
         }
 
         try {
