@@ -7,6 +7,7 @@ public class ProviderNames {
 
         if (s.contains("мосводоканал")) return "Мосводоканал";
         if (s.contains("мосэнергосбыт")) return "Мосэнергосбыт";
+        if (s.contains("Московская объединенная энергетическая компания")) return "МОЭК";
         // добавишь свои правила
 
         return full; // по умолчанию без сокращения

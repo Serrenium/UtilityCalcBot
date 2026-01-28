@@ -1,6 +1,8 @@
 package ru.UtilityCalcPk.tariff;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -52,15 +54,15 @@ public class TariffService {
     private String humanStove(String stoveType) {
         if (stoveType == null) return "плита: не указана";
         String s = stoveType.toLowerCase();
-        if (s.contains("газ")) return "газовая плита";
-        if (s.contains("электр")) return "электроплита";
+        if (s.contains("газ")) return "Газовая плита";
+        if (s.contains("электр")) return "Электроплита";
         return stoveType;
     }
     private void formatElectricity(StringBuilder sb, LocalDate date) {
         List<ElectricityPlan> plans = repository.findActiveElectricityPlans(date);
         if (plans.isEmpty()) return;
 
-        sb.append("Электроэнергия:\n");
+        sb.append("Электроэнергия\n");
 
         // сгруппуем по поставщику
         Map<String, List<ElectricityPlan>> byProvider = plans.stream()
@@ -70,7 +72,7 @@ public class TariffService {
             String providerShort = entry.getKey();
             List<ElectricityPlan> providerPlans = entry.getValue();
 
-            sb.append(providerShort).append(":\n");
+            sb.append("(").append(providerShort).append("):\n");
 
             // внутри — по типу плиты
             Map<String, List<ElectricityPlan>> byStove = providerPlans.stream()
@@ -80,10 +82,17 @@ public class TariffService {
                 String stove = e2.getKey();
                 List<ElectricityPlan> stovePlans = e2.getValue();
 
-                sb.append("  ").append(humanStove(stove)).append(":\n");
+                sb.append("\n").append("  ").append(humanStove(stove)).append(":\n");
 
-                for (ElectricityPlan p : stovePlans) {
-                    sb.append("    ")
+                List<ElectricityPlan> sorted = new ArrayList<>(stovePlans);
+                sorted.sort(Comparator.comparingInt(p -> switch (p.getType()) {
+                    case ONE_TARIFF -> 1;
+                    case TWO_TARIFF -> 2;
+                    case MULTI_TARIFF -> 3;
+                }));
+
+                for (ElectricityPlan p : sorted) {
+                    sb.append("   • ")
                             .append(humanPlanType(p.getType())).append(": ");
 
                     if (p.getType() == ElectricityPlanType.ONE_TARIFF) {
