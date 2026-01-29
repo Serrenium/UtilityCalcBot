@@ -78,9 +78,11 @@ public class UtilityCalc extends TelegramLongPollingBot {
 
     @Override
     public void onUpdateReceived(Update update) {
-        if (!update.hasMessage() || !update.getMessage().hasText()) {
+        try {
+
+            if (!update.hasMessage() || !update.getMessage().hasText()) {
             return;
-        }
+            }
 
         Long chatIdLong = update.getMessage().getChatId();
         String text = update.getMessage().getText();
@@ -184,9 +186,8 @@ public class UtilityCalc extends TelegramLongPollingBot {
             msg.setText("Команды: /calc - расчёт ЖКУ, /tariffs - актуальные тарифы, /addflat, /addmeter");
         }
 
-        try {
             execute(msg);
-        } catch (TelegramApiException e) {
+        } catch (Exception e) {
             e.printStackTrace();
         }
     }
