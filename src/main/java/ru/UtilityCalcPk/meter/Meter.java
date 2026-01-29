@@ -1,19 +1,24 @@
 package ru.UtilityCalcPk.meter;
 
-import java.math.BigDecimal;
-
 public class Meter {
 
+    private Long id;
     private Long chatId;
     private Long flatId;          // если будешь идентифицировать квартиру id
-    private String flatName;      // или просто имя квартиры
     private MeterType type;
+    private String providerShort; // Мосэнергосбыт, Мосводоканал, МОЭК и т.п.
+    private String stoveType;     // только для электрических счётчиков (газовая/электроплита)
     private InitialReading initialReading; // начальные показания
 
-    // для электрических
-    private String stoveType;     // газовая/электрическая
-
     // геттеры/сеттеры
+
+    public Long getId() {
+        return id;
+    }
+
+    public void setId(Long id) {
+        this.id = id;
+    }
 
     public Long getChatId() {
         return chatId;
@@ -29,14 +34,6 @@ public class Meter {
 
     public void setFlatId(Long flatId) {
         this.flatId = flatId;
-    }
-
-    public String getFlatName() {
-        return flatName;
-    }
-
-    public void setFlatName(String flatName) {
-        this.flatName = flatName;
     }
 
     public MeterType getType() {
@@ -61,5 +58,13 @@ public class Meter {
 
     public void setStoveType(String stoveType) {
         this.stoveType = stoveType;
+    }
+
+    public String getProviderShort() {
+        return providerShort;
+    }
+
+    public void setProviderShort(String providerShort) {
+        this.providerShort = providerShort;
     }
 }
