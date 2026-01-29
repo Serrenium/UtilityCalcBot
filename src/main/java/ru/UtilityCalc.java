@@ -48,7 +48,7 @@ public class UtilityCalc extends TelegramLongPollingBot {
 
     @Override
     public String getBotUsername() {
-        return "Utility_calc_bot";
+        return System.getenv("TELEGRAM_BOT_USERNAME");
     }
 
     @Override
