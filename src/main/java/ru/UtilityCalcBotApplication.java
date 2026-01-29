@@ -4,7 +4,6 @@ import org.telegram.telegrambots.meta.TelegramBotsApi;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.updatesreceivers.DefaultBotSession;
 import ru.UtilityCalcPk.flat.FlatRepository;
-import ru.UtilityCalcPk.meter.MeterRepository;
 import ru.UtilityCalcPk.tariff.MosRuTariffLoader;
 import ru.UtilityCalcPk.tariff.TariffRepository;
 import ru.UtilityCalcPk.tariff.TariffService;
@@ -26,10 +25,8 @@ public class UtilityCalcBotApplication {
             // Репозиторий квартир
             FlatRepository flatRepository = new FlatRepository();
 
-            MeterRepository meterRepository = new MeterRepository();
-
             // 4. Бот с сервисом
-            var bot = new UtilityCalc(tariffService, flatRepository, meterRepository);
+            var bot = new UtilityCalc(tariffService, flatRepository);
 
             // 5. Регистрация бота
             var botsApi = new TelegramBotsApi(DefaultBotSession.class);

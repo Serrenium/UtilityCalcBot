@@ -3,7 +3,6 @@ package ru.UtilityCalcPk.flat;
 public class Flat {
 
     private Long chatId;
-    private Long flatId;
     private String name;          // "Квартира на Пушкина"
     private String providerShort; // Мосводоканал/Мосэнергосбыт и т.п.
     private String stoveType;     // газовая/электрическая
@@ -40,13 +39,5 @@ public class Flat {
 
     public void setStoveType(String stoveType) {
         this.stoveType = stoveType;
-    }
-
-    public Long getId() {
-        return flatId;
-    }
-
-    public void setFlatId(Long flatId) {
-        this.flatId = flatId;
     }
 }
