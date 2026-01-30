@@ -50,13 +50,43 @@ public class UtilityCalc extends TelegramLongPollingBot {
         AddFlatState state = AddFlatState.NONE;
         String tempName; // если понадобится
     }
+    enum OnboardingState {
+        NONE,
+        ASKING_STOVE_TYPE,
+        ASKING_ELECTRIC_METER_TYPE,
+        ASKING_INITIAL_READINGS_WATER_COLD,
+        ASKING_INITIAL_READINGS_WATER_HOT,
+        ASKING_INITIAL_READINGS_ELECTRIC
+    }
 
+    class OnboardingSession {
+        OnboardingState state = OnboardingState.NONE;
+        Long defaultFlatId;
+        Long electricMeterId;
+    }
+    enum CalcState {
+        NONE,
+        ASKING_COLD,
+        ASKING_HOT,
+        ASKING_ELECTRIC
+    }
+
+    class CalcSession {
+        CalcState state = CalcState.NONE;
+        Long flatId;
+
+        BigDecimal coldCurrent;
+        BigDecimal hotCurrent;
+        InitialReading electricCurrent; // day/night/peak для текущих показаний
+    }
     private final TariffService tariffService;
     private final FlatRepository flatRepository;
     private final MeterRepository meterRepository;
 
     private final Map<Long, AddMeterSession> addMeterSessions = new HashMap<>();
     private final Map<Long, AddFlatSession> addFlatSessions = new HashMap<>();
+    private final Map<Long, OnboardingSession> onboardingSessions = new HashMap<>();
+    private final Map<Long, CalcSession> calcSessions = new HashMap<>();
 
     public UtilityCalc(TariffService tariffService,
                        FlatRepository flatRepository,
@@ -81,114 +111,148 @@ public class UtilityCalc extends TelegramLongPollingBot {
         try {
 
             if (!update.hasMessage() || !update.getMessage().hasText()) {
-            return;
+                return;
             }
 
-        Long chatIdLong = update.getMessage().getChatId();
-        String text = update.getMessage().getText();
+            Long chatIdLong = update.getMessage().getChatId();
+            String text = update.getMessage().getText();
 
-        // 1) если есть активный сценарий квартиры или счётчика — обрабатываем там
-        AddMeterSession meterSession = addMeterSessions.get(chatIdLong);
-        AddFlatSession flatSession = addFlatSessions.get(chatIdLong);
-        if ((meterSession != null && meterSession.state != AddMeterState.NONE)
-                || (flatSession != null && flatSession.state != AddFlatState.NONE)) {
-            handleTextMessage(update);   // <- это важно
-            return;
-        }
-
-        // иначе обычные команды
-        String chatId = chatIdLong.toString();
-        SendMessage msg = new SendMessage();
-        msg.setChatId(chatId);
-        msg.setReplyMarkup(buildMainMenu());
-
-        if (text.equals("/calc")) {
-            if (!flatRepository.hasFlats(chatIdLong)) {
-                msg.setText("Пока нет ни одной квартиры.\n" +
-                        "Добавьте квартиру командой /addflat.");
-            } else {
-                msg.setText("Введите: горячая вода(м3), холодная вода(м3), свет(кВт·ч)\n" +
-                        "Пример: 50,10,200");
+            // 1) если есть активный сценарий квартиры или счётчика — обрабатываем там
+            AddMeterSession meterSession = addMeterSessions.get(chatIdLong);
+            AddFlatSession flatSession = addFlatSessions.get(chatIdLong);
+            OnboardingSession onboarding = onboardingSessions.get(chatIdLong);
+            CalcSession calcSession = calcSessions.get(chatIdLong);
+            if ((meterSession != null && meterSession.state != AddMeterState.NONE)
+                    || (flatSession != null && flatSession.state != AddFlatState.NONE)
+                    || (onboarding != null && onboarding.state != OnboardingState.NONE)
+                    || (calcSession != null && calcSession.state != CalcState.NONE)) {
+                handleTextMessage(update);
+                return;
             }
 
-        } else if (text.equals("/tariffs")) {
-            String tariffsText = tariffService.formatTodayTariffsForBot();
-            msg.setText(tariffsText);
+            // иначе обычные команды
+            String chatId = chatIdLong.toString();
+            SendMessage msg = new SendMessage();
+            msg.setChatId(chatId);
+            msg.setReplyMarkup(buildMainMenu());
 
-        } else if (text.matches("\\d+,\\d+,\\d+")) {
-            String[] parts = text.split(",");
-            double hot = Double.parseDouble(parts[0]);
-            double cold = Double.parseDouble(parts[1]);
-            double power = Double.parseDouble(parts[2]);
+            if (text.equals("/calc")) {
 
-            double total = hot * 40 + cold * 30 + power * 5.5;
-            msg.setText(String.format("Итого: %.2f ₽", total));
+                ensureDefaultSetup(chatIdLong); // на всякий случай
 
-        } else if (text.equals("/addflat")) {
-            // здесь только старт сценария:
-            boolean hasDefaultFlat = flatRepository.existsByChatIdAndName(chatIdLong, "Моя квартира");
-            AddFlatSession s = addFlatSessions.computeIfAbsent(chatIdLong, id -> new AddFlatSession());
+                List<Flat> flats = flatRepository.findByChatId(chatIdLong);
+                if (flats.isEmpty()) {
+                    msg.setText("У вас пока нет квартир. Попробуйте /start или /addflat.");
+                } else {
+                    Flat flat = flats.get(0); // пока считаем по первой (дефолтной)
 
-            if (hasDefaultFlat) {
-                s.state = AddFlatState.ENTERING_CUSTOM_NAME;
-                msg.setText("Как назовем новую квартиту?");
-            } else {
-                s.state = AddFlatState.CONFIRM_DEFAULT_NAME;
-                msg.setText("Имя «Моя квартира» подойдет?\n" +
-                        "Ответьте «Да» или «Нет».");
-            }
+                    CalcSession session = calcSessions.computeIfAbsent(chatIdLong, id -> new CalcSession());
+                    session.state = CalcState.ASKING_COLD;
+                    session.flatId = flat.getId();
+                    session.coldCurrent = null;
+                    session.hotCurrent = null;
+                    session.electricCurrent = null;
 
-            try {
-                execute(msg);
-            } catch (TelegramApiException e) {
-                e.printStackTrace();
-            }
-            return;
-
-        } else if (text.equals("/addmeter")) {
-            handleAddMeterCommand(update);
-            return;
-
-        } else if (text.equals("/flats")) {
-            String flatsText = formatFlatsAndMeters(chatIdLong);
-            msg.setText(flatsText);
-
-        } else if (text.startsWith("/deleteflat")) {
-            String[] parts = text.split("\\s+");
-            if (parts.length != 2) {
-                msg.setText("Использование: /deleteflat <id>");
-            } else {
-                try {
-                    Long id = Long.parseLong(parts[1]);
-                    flatRepository.deleteById(chatIdLong, id);
-                    // удаляем все счётчики этой квартиры
-                    meterRepository.deleteByFlat(chatIdLong, id);
-                    msg.setText("Квартира #" + id + " и её счётчики удалены.");
-                } catch (NumberFormatException e) {
-                    msg.setText("id должен быть числом.");
+                    msg.setText("Введите текущие показания по холодной воде (м³), одно число, например 123.45.");
                 }
-            }
-        } else if (text.startsWith("/deletemeter")) {
-            String[] parts = text.split("\\s+");
-            if (parts.length != 2) {
-                msg.setText("Использование: /deletemeter <id>");
-            } else {
+
                 try {
-                    Long id = Long.parseLong(parts[1]);
-                    meterRepository.deleteById(chatIdLong, id);
-                    msg.setText("Счётчик #" + id + " удалён.");
-                } catch (NumberFormatException e) {
-                    msg.setText("id должен быть числом.");
+                    execute(msg);
+                } catch (TelegramApiException e) {
+                    e.printStackTrace();
                 }
+                return;
+
+            } else if (text.equals("/tariffs")) {
+                String tariffsText = tariffService.formatTodayTariffsForBot();
+                msg.setText(tariffsText);
+
+            } else if (text.matches("/\\d+\\s*,\\s*\\d+\\s*,\\s*\\d+/gm")) {
+                String[] parts = text.split(",");
+                double hot = Double.parseDouble(parts[0]);
+                double cold = Double.parseDouble(parts[1]);
+                double power = Double.parseDouble(parts[2]);
+
+                double total = hot * 40 + cold * 30 + power * 5.5;
+                msg.setText(String.format("Итого: %.2f ₽", total));
+
+            } else if (text.equals("/start")) {
+
+                ensureDefaultSetup(chatIdLong);
+
+                sendText(chatIdLong,
+                        "Я создал для вас квартиру «Моя квартира» с тремя счётчиками:\n" +
+                                "холодная вода, горячая вода и электроэнергия.\n\n" +
+                                "Сейчас уточним тип плиты и тип электросчётчика, а затем попросим первые показания.");
+
+                startOnboardingElectricity(update); // запустим мастер для плиты и типа счётчика
+                return;
+
+            } else if (text.equals("/addflat")) {
+                // здесь только старт сценария:
+                boolean hasDefaultFlat = flatRepository.existsByChatIdAndName(chatIdLong, "Моя квартира");
+                AddFlatSession s = addFlatSessions.computeIfAbsent(chatIdLong, id -> new AddFlatSession());
+
+                if (hasDefaultFlat) {
+                    s.state = AddFlatState.ENTERING_CUSTOM_NAME;
+                    msg.setText("Как назовем новую квартиту?");
+                } else {
+                    s.state = AddFlatState.CONFIRM_DEFAULT_NAME;
+                    msg.setText("Имя «Моя квартира» подойдет?\n" +
+                            "Ответьте «Да» или «Нет».");
+                }
+
+                try {
+                    execute(msg);
+                } catch (TelegramApiException e) {
+                    e.printStackTrace();
+                }
+                return;
+
+            } else if (text.equals("/addmeter")) {
+                handleAddMeterCommand(update);
+                return;
+
+            } else if (text.equals("/flats")) {
+                String flatsText = formatFlatsAndMeters(chatIdLong);
+                msg.setText(flatsText);
+
+            } else if (text.startsWith("/deleteflat")) {
+                String[] parts = text.split("\\s+");
+                if (parts.length != 2) {
+                    msg.setText("Использование: /deleteflat <id>");
+                } else {
+                    try {
+                        Long id = Long.parseLong(parts[1]);
+                        flatRepository.deleteById(chatIdLong, id);
+                        // удаляем все счётчики этой квартиры
+                        meterRepository.deleteByFlat(chatIdLong, id);
+                        msg.setText("Квартира #" + id + " и её счётчики удалены.");
+                    } catch (NumberFormatException e) {
+                        msg.setText("id должен быть числом.");
+                    }
+                }
+            } else if (text.startsWith("/deletemeter")) {
+                String[] parts = text.split("\\s+");
+                if (parts.length != 2) {
+                    msg.setText("Использование: /deletemeter <id>");
+                } else {
+                    try {
+                        Long id = Long.parseLong(parts[1]);
+                        meterRepository.deleteById(chatIdLong, id);
+                        msg.setText("Счётчик #" + id + " удалён.");
+                    } catch (NumberFormatException e) {
+                        msg.setText("id должен быть числом.");
+                    }
+                }
+
+            } else {
+                msg.setText("Команды: /calc - расчёт ЖКУ, /tariffs - актуальные тарифы, /addflat, /addmeter");
             }
-
-        } else {
-            msg.setText("Команды: /calc - расчёт ЖКУ, /tariffs - актуальные тарифы, /addflat, /addmeter");
-        }
-
             execute(msg);
+
         } catch (Exception e) {
-            e.printStackTrace();
+                e.printStackTrace();
         }
     }
 
@@ -226,7 +290,18 @@ public class UtilityCalc extends TelegramLongPollingBot {
             return;
         }
 
-        // остальной free‑text
+        // 3) онбординг
+        OnboardingSession onboarding = onboardingSessions.get(chatId);
+        if (onboarding != null && onboarding.state != OnboardingState.NONE) {
+            continueOnboarding(update, onboarding);
+            return;
+        }
+
+        CalcSession calcSession = calcSessions.get(chatId);
+        if (calcSession != null && calcSession.state != CalcState.NONE) {
+            continueCalc(update, calcSession);
+            return;
+        }
     }
 
     private void continueAddFlat(Update update, AddFlatSession session) {
@@ -537,6 +612,538 @@ public class UtilityCalc extends TelegramLongPollingBot {
                 .append("/deletemeter <id> – удалить счётчик");
 
         return sb.toString();
+    }
+    private void ensureDefaultSetup(Long chatId) {
+        // если у пользователя уже есть хоть одна квартира — ничего не делаем
+        if (flatRepository.hasFlats(chatId)) {
+            return;
+        }
+
+        // создаём дефолтную квартиру
+        Flat flat = new Flat();
+        flat.setChatId(chatId);
+        flat.setName("Моя квартира");
+        flatRepository.save(flat); // id заполнится из БД
+
+        // холодная вода
+        Meter cold = new Meter();
+        cold.setChatId(chatId);
+        cold.setFlatId(flat.getId());
+        cold.setType(MeterType.WATER_COLD);
+        cold.setProviderShort("Мосводоканал");
+        cold.setInitialReading(new InitialReading()); // пока пусто
+        meterRepository.save(cold);
+
+        // горячая вода
+        Meter hot = new Meter();
+        hot.setChatId(chatId);
+        hot.setFlatId(flat.getId());
+        hot.setType(MeterType.WATER_HOT);
+        hot.setProviderShort("МОЭК");
+        hot.setInitialReading(new InitialReading());
+        meterRepository.save(hot);
+
+        // электроэнергия (тип и плита уточним потом)
+        Meter el = new Meter();
+        el.setChatId(chatId);
+        el.setFlatId(flat.getId());
+        el.setType(MeterType.ELECTRICITY_ONE); // временно однотарифный
+        el.setProviderShort("Мосэнергосбыт");
+        el.setInitialReading(new InitialReading());
+        meterRepository.save(el);
+    }
+    private void startOnboardingElectricity(Update update) {
+        Long chatId = update.getMessage().getChatId();
+
+        // найдём дефолтную квартиру и её электросчётчик
+        List<Flat> flats = flatRepository.findByChatId(chatId);
+        if (flats.isEmpty()) {
+            sendText(chatId, "Не удалось найти квартиру. Попробуйте ещё раз команду /start.");
+            return;
+        }
+        Flat flat = flats.get(0); // у нас одна дефолтная
+
+        List<Meter> meters = meterRepository.findByFlat(chatId, flat.getId());
+        Meter electric = meters.stream()
+                .filter(m -> m.getType() == MeterType.ELECTRICITY_ONE
+                        || m.getType() == MeterType.ELECTRICITY_TWO
+                        || m.getType() == MeterType.ELECTRICITY_MULTI)
+                .findFirst()
+                .orElse(null);
+
+        if (electric == null) {
+            sendText(chatId, "Не найден электросчётчик. Попробуйте /addmeter.");
+            return;
+        }
+
+        OnboardingSession session = onboardingSessions.computeIfAbsent(chatId, id -> new OnboardingSession());
+        session.state = OnboardingState.ASKING_STOVE_TYPE;
+        session.defaultFlatId = flat.getId();
+        session.electricMeterId = electric.getId();
+
+        sendText(chatId,
+                "Какой у вас тип плиты?\n" +
+                        "1) Газовая плита\n" +
+                        "2) Электроплита\n\n" +
+                        "Отправьте номер варианта.");
+    }
+    private void continueOnboarding(Update update, OnboardingSession session) {
+        Long chatId = update.getMessage().getChatId();
+        String text = update.getMessage().getText().trim();
+
+        switch (session.state) {
+            case ASKING_STOVE_TYPE -> {
+                String stove;
+                if ("1".equals(text)) {
+                    stove = "газовая плита";
+                } else if ("2".equals(text)) {
+                    stove = "электроплита";
+                } else {
+                    sendText(chatId, "Нужно 1 или 2.");
+                    return;
+                }
+
+                // обновляем электросчётчик
+                Meter el = getElectricMeter(chatId, session.electricMeterId);
+                if (el == null) {
+                    sendText(chatId, "Не удалось найти электросчётчик.");
+                    session.state = OnboardingState.NONE;
+                    return;
+                }
+                el.setStoveType(stove);
+                meterRepository.save(el);
+
+                sendText(chatId,
+                        "Какой у вас электрический счётчик?\n" +
+                                "1) Однотарифный\n" +
+                                "2) Двухтарифный\n" +
+                                "3) Многотарифный\n\n" +
+                                "Отправьте номер варианта.");
+                session.state = OnboardingState.ASKING_ELECTRIC_METER_TYPE;
+            }
+            case ASKING_ELECTRIC_METER_TYPE -> {
+                MeterType type;
+                if ("1".equals(text)) {
+                    type = MeterType.ELECTRICITY_ONE;
+                } else if ("2".equals(text)) {
+                    type = MeterType.ELECTRICITY_TWO;
+                } else if ("3".equals(text)) {
+                    type = MeterType.ELECTRICITY_MULTI;
+                } else {
+                    sendText(chatId, "Нужно 1, 2 или 3.");
+                    return;
+                }
+
+                Meter el = getElectricMeter(chatId, session.electricMeterId);
+                if (el == null) {
+                    sendText(chatId, "Не удалось найти электросчётчик.");
+                    session.state = OnboardingState.NONE;
+                    return;
+                }
+                el.setType(type);
+                meterRepository.save(el);
+
+                sendText(chatId,
+                        "Теперь введите первые показания счётчиков.\n" +
+                                "Сначала холодная вода (одно число, например 123.45):");
+                session.state = OnboardingState.ASKING_INITIAL_READINGS_WATER_COLD;
+            }
+            case ASKING_INITIAL_READINGS_WATER_COLD -> {
+                BigDecimal value;
+                try {
+                    value = new BigDecimal(text.replace(',', '.'));
+                } catch (NumberFormatException e) {
+                    sendText(chatId, "Не удалось распознать число. Введите показания ещё раз.");
+                    return;
+                }
+
+                // найдём холодный счётчик и запишем
+                Flat flat = flatRepository.findByChatId(chatId).get(0);
+                List<Meter> meters = meterRepository.findByFlat(chatId, flat.getId());
+                Meter cold = meters.stream()
+                        .filter(m -> m.getType() == MeterType.WATER_COLD)
+                        .findFirst().orElse(null);
+                if (cold != null) {
+                    InitialReading r = cold.getInitialReading();
+                    if (r == null) r = new InitialReading();
+                    r.setTotal(value);
+                    cold.setInitialReading(r);
+                    meterRepository.save(cold);
+                }
+
+                sendText(chatId,
+                        "Теперь горячая вода (одно число, например 123.45):");
+                session.state = OnboardingState.ASKING_INITIAL_READINGS_WATER_HOT;
+            }
+            case ASKING_INITIAL_READINGS_WATER_HOT -> {
+                BigDecimal value;
+                try {
+                    value = new BigDecimal(text.replace(',', '.'));
+                } catch (NumberFormatException e) {
+                    sendText(chatId, "Не удалось распознать число. Введите показания ещё раз.");
+                    return;
+                }
+
+                Flat flat = flatRepository.findByChatId(chatId).get(0);
+                List<Meter> meters = meterRepository.findByFlat(chatId, flat.getId());
+                Meter hot = meters.stream()
+                        .filter(m -> m.getType() == MeterType.WATER_HOT)
+                        .findFirst().orElse(null);
+                if (hot != null) {
+                    InitialReading r = hot.getInitialReading();
+                    if (r == null) r = new InitialReading();
+                    r.setTotal(value);
+                    hot.setInitialReading(r);
+                    meterRepository.save(hot);
+                }
+
+                // теперь спросим электричество в зависимости от типа
+                Meter el = getElectricMeter(chatId, session.electricMeterId);
+                if (el == null) {
+                    sendText(chatId, "Не удалось найти электросчётчик.");
+                    session.state = OnboardingState.NONE;
+                    return;
+                }
+
+                if (el.getType() == MeterType.ELECTRICITY_ONE) {
+                    sendText(chatId,
+                            "Введите первые показания электросчётчика (одно число):");
+                } else if (el.getType() == MeterType.ELECTRICITY_TWO) {
+                    sendText(chatId,
+                            "Введите два числа через пробел: день и ночь.\n" +
+                                    "Например: 1234.5 678.9");
+                } else {
+                    sendText(chatId,
+                            "Введите три числа через пробел: день, ночь, пик.\n" +
+                                    "Например: 1234.5 678.9 12.3");
+                }
+                session.state = OnboardingState.ASKING_INITIAL_READINGS_ELECTRIC;
+            }
+            case ASKING_INITIAL_READINGS_ELECTRIC -> {
+                Meter el = getElectricMeter(chatId, session.electricMeterId);
+                if (el == null) {
+                    sendText(chatId, "Не удалось найти электросчётчик.");
+                    session.state = OnboardingState.NONE;
+                    return;
+                }
+
+                String[] parts = text.replace(',', '.').trim().split("\\s+");
+                InitialReading r = new InitialReading();
+
+                try {
+                    switch (el.getType()) {
+                        case ELECTRICITY_ONE -> {
+                            if (parts.length != 1) {
+                                sendText(chatId, "Нужно одно число. Попробуйте ещё раз.");
+                                return;
+                            }
+                            r.setTotal(new BigDecimal(parts[0]));
+                        }
+                        case ELECTRICITY_TWO -> {
+                            if (parts.length != 2) {
+                                sendText(chatId, "Нужно два числа: день и ночь.");
+                                return;
+                            }
+                            r.setDay(new BigDecimal(parts[0]));
+                            r.setNight(new BigDecimal(parts[1]));
+                        }
+                        case ELECTRICITY_MULTI -> {
+                            if (parts.length != 3) {
+                                sendText(chatId, "Нужно три числа: день, ночь, пик.");
+                                return;
+                            }
+                            r.setDay(new BigDecimal(parts[0]));
+                            r.setNight(new BigDecimal(parts[1]));
+                            r.setPeak(new BigDecimal(parts[2]));
+                        }
+                    }
+                } catch (NumberFormatException e) {
+                    sendText(chatId, "Не удалось распознать числа. Введите ещё раз.");
+                    return;
+                }
+
+                el.setInitialReading(r);
+                meterRepository.save(el);
+
+                sendText(chatId,
+                        "Готово! Квартира и счётчики настроены.\n" +
+                                "Теперь можно использовать /calc или /flats для просмотра.");
+                session.state = OnboardingState.NONE;
+            }
+        }
+    }
+    private Meter getElectricMeter(Long chatId, Long meterId) {
+        // можно сделать метод findById в MeterRepository, но пока обойдёмся:
+        // если часто нужен, лучше добавить нормальный метод
+        Flat flat = flatRepository.findByChatId(chatId).get(0);
+        return meterRepository.findByFlat(chatId, flat.getId()).stream()
+                .filter(m -> m.getId().equals(meterId))
+                .findFirst()
+                .orElse(null);
+    }
+    private void continueCalc(Update update, CalcSession session) {
+        Long chatId = update.getMessage().getChatId();
+        String text = update.getMessage().getText().trim();
+
+        switch (session.state) {
+            case ASKING_COLD -> {
+                BigDecimal value;
+                try {
+                    value = new BigDecimal(text.replace(',', '.'));
+                } catch (NumberFormatException e) {
+                    sendText(chatId, "Не удалось распознать число. Введите показания холодной воды ещё раз.");
+                    return;
+                }
+                session.coldCurrent = value;
+
+                sendText(chatId,
+                        "Теперь введите текущие показания по горячей воде (м³), одно число, например 123.45.");
+                session.state = CalcState.ASKING_HOT;
+            }
+            case ASKING_HOT -> {
+                BigDecimal value;
+                try {
+                    value = new BigDecimal(text.replace(',', '.'));
+                } catch (NumberFormatException e) {
+                    sendText(chatId, "Не удалось распознать число. Введите показания горячей воды ещё раз.");
+                    return;
+                }
+                session.hotCurrent = value;
+
+                // найдём электро‑счётчик и спросим показания по его типу
+                Flat flat = flatRepository.findByChatId(chatId).get(0);
+                List<Meter> meters = meterRepository.findByFlat(chatId, flat.getId());
+                Meter el = meters.stream()
+                        .filter(m -> m.getType() == MeterType.ELECTRICITY_ONE
+                                || m.getType() == MeterType.ELECTRICITY_TWO
+                                || m.getType() == MeterType.ELECTRICITY_MULTI)
+                        .findFirst()
+                        .orElse(null);
+
+                if (el == null) {
+                    sendText(chatId, "Не найден электросчётчик. Расчёт только по воде.");
+                    // сразу считаем по воде
+                    finishCalc(chatId, session, flat, null);
+                    session.state = CalcState.NONE;
+                    return;
+                }
+
+                if (el.getType() == MeterType.ELECTRICITY_ONE) {
+                    sendText(chatId,
+                            "Введите текущие показания электросчётчика (одно число, например 1234.5).");
+                } else if (el.getType() == MeterType.ELECTRICITY_TWO) {
+                    sendText(chatId,
+                            "Введите два числа через пробел: день и ночь.\nНапример: 1234.5 678.9");
+                } else {
+                    sendText(chatId,
+                            "Введите три числа через пробел: день, ночь, пик.\nНапример: 1234.5 678.9 12.3");
+                }
+                session.state = CalcState.ASKING_ELECTRIC;
+            }
+            case ASKING_ELECTRIC -> {
+                Flat flat = flatRepository.findByChatId(chatId).get(0);
+                List<Meter> meters = meterRepository.findByFlat(chatId, flat.getId());
+                Meter el = meters.stream()
+                        .filter(m -> m.getType() == MeterType.ELECTRICITY_ONE
+                                || m.getType() == MeterType.ELECTRICITY_TWO
+                                || m.getType() == MeterType.ELECTRICITY_MULTI)
+                        .findFirst()
+                        .orElse(null);
+
+                if (el == null) {
+                    sendText(chatId, "Не найден электросчётчик. Расчёт только по воде.");
+                    finishCalc(chatId, session, flat, null);
+                    session.state = CalcState.NONE;
+                    return;
+                }
+
+                String[] parts = text.replace(',', '.').trim().split("\\s+");
+                InitialReading current = new InitialReading();
+
+                try {
+                    switch (el.getType()) {
+                        case ELECTRICITY_ONE -> {
+                            if (parts.length != 1) {
+                                sendText(chatId, "Нужно одно число. Попробуйте ещё раз.");
+                                return;
+                            }
+                            current.setTotal(new BigDecimal(parts[0]));
+                        }
+                        case ELECTRICITY_TWO -> {
+                            if (parts.length != 2) {
+                                sendText(chatId, "Нужно два числа: день и ночь.");
+                                return;
+                            }
+                            current.setDay(new BigDecimal(parts[0]));
+                            current.setNight(new BigDecimal(parts[1]));
+                        }
+                        case ELECTRICITY_MULTI -> {
+                            if (parts.length != 3) {
+                                sendText(chatId, "Нужно три числа: день, ночь, пик.");
+                                return;
+                            }
+                            current.setDay(new BigDecimal(parts[0]));
+                            current.setNight(new BigDecimal(parts[1]));
+                            current.setPeak(new BigDecimal(parts[2]));
+                        }
+                    }
+                } catch (NumberFormatException e) {
+                    sendText(chatId, "Не удалось распознать числа. Введите ещё раз.");
+                    return;
+                }
+
+                session.electricCurrent = current;
+
+                finishCalc(chatId, session, flat, el);
+                session.state = CalcState.NONE;
+            }
+        }
+    }
+    private void finishCalc(Long chatId, CalcSession session, Flat flat, Meter electric) {
+        List<Meter> meters = meterRepository.findByFlat(chatId, flat.getId());
+
+        Meter cold = meters.stream()
+                .filter(m -> m.getType() == MeterType.WATER_COLD)
+                .findFirst().orElse(null);
+        Meter hot = meters.stream()
+                .filter(m -> m.getType() == MeterType.WATER_HOT)
+                .findFirst().orElse(null);
+
+        BigDecimal coldStart = cold != null && cold.getInitialReading() != null
+                ? cold.getInitialReading().getTotal() : BigDecimal.ZERO;
+        BigDecimal hotStart = hot != null && hot.getInitialReading() != null
+                ? hot.getInitialReading().getTotal() : BigDecimal.ZERO;
+
+        BigDecimal coldUsage = session.coldCurrent.subtract(coldStart);
+        BigDecimal hotUsage = session.hotCurrent.subtract(hotStart);
+
+        BigDecimal sewerUsage = coldUsage.add(hotUsage); // водоотведение
+
+        // Тарифы: здесь псевдо‑код, ты знаешь свою TariffService лучше
+        BigDecimal coldTariff = tariffService.getColdWaterTariff(flat);     // м³
+        BigDecimal hotTariff = tariffService.getHotWaterTariff(flat);       // м³ (вода + тепло)
+        BigDecimal sewerTariff = tariffService.getSewerTariff(flat);        // м³
+        BigDecimal elDayTariff = null;
+        BigDecimal elNightTariff = null;
+        BigDecimal elPeakTariff = null;
+
+        InitialReading elStart = electric != null ? electric.getInitialReading() : null;
+        BigDecimal elCost = BigDecimal.ZERO;
+
+        StringBuilder report = new StringBuilder();
+        report.append("Расчёт по квартире \"").append(flat.getName()).append("\":\n\n");
+
+        // Холодная
+        BigDecimal coldCost = coldUsage.multiply(coldTariff);
+        report.append("Холодная вода: расход ")
+                .append(coldUsage).append(" м³ × ")
+                .append(coldTariff).append(" ₽ = ")
+                .append(coldCost).append(" ₽\n");
+
+        // Горячая
+        BigDecimal hotCost = hotUsage.multiply(hotTariff);
+        report.append("Горячая вода: расход ")
+                .append(hotUsage).append(" м³ × ")
+                .append(hotTariff).append(" ₽ = ")
+                .append(hotCost).append(" ₽\n");
+
+        // Водоотведение
+        BigDecimal sewerCost = sewerUsage.multiply(sewerTariff);
+        report.append("Водоотведение: расход ")
+                .append(sewerUsage).append(" м³ × ")
+                .append(sewerTariff).append(" ₽ = ")
+                .append(sewerCost).append(" ₽\n");
+
+        // Электричество
+        if (electric != null && elStart != null && session.electricCurrent != null) {
+            switch (electric.getType()) {
+                case ELECTRICITY_ONE -> {
+                    BigDecimal start = elStart.getTotal() != null ? elStart.getTotal() : BigDecimal.ZERO;
+                    BigDecimal usage = session.electricCurrent.getTotal().subtract(start);
+                    BigDecimal t = tariffService.getElectricSingleTariff(flat, electric);
+                    elCost = usage.multiply(t);
+                    report.append("Электроэнергия (1‑тариф): расход ")
+                            .append(usage).append(" кВт·ч × ")
+                            .append(t).append(" ₽ = ")
+                            .append(elCost).append(" ₽\n");
+                }
+                case ELECTRICITY_TWO -> {
+                    BigDecimal startDay = elStart.getDay() != null ? elStart.getDay() : BigDecimal.ZERO;
+                    BigDecimal startNight = elStart.getNight() != null ? elStart.getNight() : BigDecimal.ZERO;
+                    BigDecimal usageDay = session.electricCurrent.getDay().subtract(startDay);
+                    BigDecimal usageNight = session.electricCurrent.getNight().subtract(startNight);
+
+                    BigDecimal tDay = tariffService.getElectricDayTariff(flat, electric);
+                    BigDecimal tNight = tariffService.getElectricNightTariff(flat, electric);
+
+                    BigDecimal costDay = usageDay.multiply(tDay);
+                    BigDecimal costNight = usageNight.multiply(tNight);
+                    elCost = costDay.add(costNight);
+
+                    report.append("Электроэнергия (2‑тариф):\n")
+                            .append("  День: ").append(usageDay).append(" × ").append(tDay)
+                            .append(" ₽ = ").append(costDay).append(" ₽\n")
+                            .append("  Ночь: ").append(usageNight).append(" × ").append(tNight)
+                            .append(" ₽ = ").append(costNight).append(" ₽\n");
+                }
+                case ELECTRICITY_MULTI -> {
+                    BigDecimal startDay = elStart.getDay() != null ? elStart.getDay() : BigDecimal.ZERO;
+                    BigDecimal startNight = elStart.getNight() != null ? elStart.getNight() : BigDecimal.ZERO;
+                    BigDecimal startPeak = elStart.getPeak() != null ? elStart.getPeak() : BigDecimal.ZERO;
+
+                    BigDecimal usageDay = session.electricCurrent.getDay().subtract(startDay);
+                    BigDecimal usageNight = session.electricCurrent.getNight().subtract(startNight);
+                    BigDecimal usagePeak = session.electricCurrent.getPeak().subtract(startPeak);
+
+                    BigDecimal tDay = tariffService.getElectricDayTariff(flat, electric);
+                    BigDecimal tNight = tariffService.getElectricNightTariff(flat, electric);
+                    BigDecimal tPeak = tariffService.getElectricPeakTariff(flat, electric);
+
+                    BigDecimal costDay = usageDay.multiply(tDay);
+                    BigDecimal costNight = usageNight.multiply(tNight);
+                    BigDecimal costPeak = usagePeak.multiply(tPeak);
+
+                    elCost = costDay.add(costNight).add(costPeak);
+
+                    report.append("Электроэнергия (3‑тариф):\n")
+                            .append("  День: ").append(usageDay).append(" × ").append(tDay)
+                            .append(" ₽ = ").append(costDay).append(" ₽\n")
+                            .append("  Ночь: ").append(usageNight).append(" × ").append(tNight)
+                            .append(" ₽ = ").append(costNight).append(" ₽\n")
+                            .append("  Пик: ").append(usagePeak).append(" × ").append(tPeak)
+                            .append(" ₽ = ").append(costPeak).append(" ₽\n");
+                }
+            }
+        }
+
+        BigDecimal total = coldCost.add(hotCost).add(sewerCost).add(elCost);
+
+        report.append("\nИтого к оплате: ").append(total).append(" ₽");
+
+        // 1) Обновляем начальные показания воды
+        if (cold != null) {
+            InitialReading r = cold.getInitialReading();
+            if (r == null) r = new InitialReading();
+            r.setTotal(session.coldCurrent);
+            cold.setInitialReading(r);
+            meterRepository.save(cold);
+        }
+
+        if (hot != null) {
+            InitialReading r = hot.getInitialReading();
+            if (r == null) r = new InitialReading();
+            r.setTotal(session.hotCurrent);
+            hot.setInitialReading(r);
+            meterRepository.save(hot);
+        }
+
+        // 2) Обновляем начальные показания электричества
+        if (electric != null && session.electricCurrent != null) {
+            electric.setInitialReading(session.electricCurrent);
+            meterRepository.save(electric);
+        }
+
+        sendText(chatId, report.toString());
     }
 
 }

@@ -1,40 +1,108 @@
 package ru.UtilityCalcPk.flat;
 
+import ru.Db;
+
+import java.sql.*;
 import java.util.*;
 
 public class FlatRepository {
 
-    // ключ: chatId, значение: список квартир пользователя
-    private final Map<Long, List<Flat>> flatsByChat = new HashMap<>();
-
     public List<Flat> findByChatId(Long chatId) {
-        return flatsByChat.getOrDefault(chatId, Collections.emptyList());
+        String sql = "SELECT id, chat_id, name FROM flats WHERE chat_id = ?";
+        List<Flat> result = new ArrayList<>();
+
+        try (Connection c = Db.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+
+            ps.setLong(1, chatId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    Flat f = new Flat();
+                    f.setId(rs.getLong("id"));
+                    f.setChatId(rs.getLong("chat_id"));
+                    f.setName(rs.getString("name"));
+                    result.add(f);
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+        return result;
     }
-    // счетчик для генерации уникальных идентификаторов
-    private long flatSeq = 1L;
 
     public void save(Flat flat) {
         if (flat.getId() == null) {
-            flat.setId(flatSeq++);
+            String sql = "INSERT INTO flats(chat_id, name) VALUES (?, ?)";
+            try (Connection c = Db.getConnection();
+                 PreparedStatement ps = c.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+
+                ps.setLong(1, flat.getChatId());
+                ps.setString(2, flat.getName());
+                ps.executeUpdate();
+
+                try (ResultSet rs = ps.getGeneratedKeys()) {
+                    if (rs.next()) {
+                        flat.setId(rs.getLong(1));
+                    }
+                }
+            } catch (SQLException e) {
+                throw new RuntimeException(e);
+            }
+        } else {
+            String sql = "UPDATE flats SET name = ? WHERE id = ? AND chat_id = ?";
+            try (Connection c = Db.getConnection();
+                 PreparedStatement ps = c.prepareStatement(sql)) {
+
+                ps.setString(1, flat.getName());
+                ps.setLong(2, flat.getId());
+                ps.setLong(3, flat.getChatId());
+                ps.executeUpdate();
+            } catch (SQLException e) {
+                throw new RuntimeException(e);
+            }
         }
-        flatsByChat
-                .computeIfAbsent(flat.getChatId(), id -> new ArrayList<>())
-                .add(flat);
     }
 
     public boolean hasFlats(Long chatId) {
-        return !findByChatId(chatId).isEmpty();
+        String sql = "SELECT 1 FROM flats WHERE chat_id = ? LIMIT 1";
+        try (Connection c = Db.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+
+            ps.setLong(1, chatId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     public boolean existsByChatIdAndName(Long chatId, String name) {
-        return findByChatId(chatId).stream()
-                .anyMatch(f -> name.equals(f.getName()));
+        String sql = "SELECT 1 FROM flats WHERE chat_id = ? AND name = ? LIMIT 1";
+        try (Connection c = Db.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+
+            ps.setLong(1, chatId);
+            ps.setString(2, name);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     public void deleteById(Long chatId, Long flatId) {
-        List<Flat> list = flatsByChat.get(chatId);
-        if (list == null) return;
-        list.removeIf(f -> f.getId().equals(flatId));
-    }
+        String sql = "DELETE FROM flats WHERE id = ? AND chat_id = ?";
+        try (Connection c = Db.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
 
+            ps.setLong(1, flatId);
+            ps.setLong(2, chatId);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
 }
+

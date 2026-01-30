@@ -1,5 +1,10 @@
 package ru.UtilityCalcPk.tariff;
 
+import ru.UtilityCalcPk.flat.Flat;
+import ru.UtilityCalcPk.meter.Meter;
+import ru.UtilityCalcPk.meter.MeterType;
+
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -113,5 +118,83 @@ public class TariffService {
             sb.append("\n");
         }
     }
+
+    public BigDecimal getColdWaterTariff(Flat flat) {
+        LocalDate today = LocalDate.now();
+        return repository.findActiveByDate(today).stream()
+                .filter(t -> t.getService() == ServiceType.WATER_COLD)
+                .filter(t -> "Мосводоканал".equalsIgnoreCase(t.getProviderShort()))
+                .map(Tariff::getValue)
+                .findFirst()
+                .orElse(BigDecimal.ZERO);
+    }
+
+    public BigDecimal getHotWaterTariff(Flat flat) {
+        LocalDate today = LocalDate.now();
+        return repository.findActiveByDate(today).stream()
+                .filter(t -> t.getService() == ServiceType.WATER_HOT)
+                .filter(t -> "МОЭК".equalsIgnoreCase(t.getProviderShort()))
+                .map(Tariff::getValue)
+                .findFirst()
+                .orElse(BigDecimal.ZERO);
+    }
+
+    public BigDecimal getSewerTariff(Flat flat) {
+        LocalDate today = LocalDate.now();
+        return repository.findActiveByDate(today).stream()
+                .filter(t -> t.getService() == ServiceType.SEWERAGE)
+                .filter(t -> "Мосводоканал".equalsIgnoreCase(t.getProviderShort()))
+                .map(Tariff::getValue)
+                .findFirst()
+                .orElse(BigDecimal.ZERO);
+    }
+
+    private ElectricityPlan findElectricPlan(Flat flat, Meter electric, ElectricityPlanType planType) {
+        LocalDate today = LocalDate.now();
+        List<ElectricityPlan> plans = repository.findActiveElectricityPlans(today);
+
+        String provider = electric.getProviderShort();
+        String stove = electric.getStoveType();
+
+        return plans.stream()
+                .filter(p -> p.getProviderShort().equalsIgnoreCase(provider))
+                .filter(p -> {
+                    // stoveType у планов и в Meter могут отличаться по регистру, учитываем это
+                    String ps = p.getStoveType();
+                    if (ps == null || stove == null) return false;
+                    return ps.equalsIgnoreCase(stove);
+                })
+                .filter(p -> p.getType() == planType)
+                .findFirst()
+                .orElse(null);
+    }
+
+    public BigDecimal getElectricSingleTariff(Flat flat, Meter electric) {
+        ElectricityPlan plan = findElectricPlan(flat, electric, ElectricityPlanType.ONE_TARIFF);
+        return plan != null ? plan.getDayTariff() : BigDecimal.ZERO;
+    }
+
+    public BigDecimal getElectricDayTariff(Flat flat, Meter electric) {
+        ElectricityPlan plan = findElectricPlan(flat, electric,
+                electric.getType() == MeterType.ELECTRICITY_TWO
+                        ? ElectricityPlanType.TWO_TARIFF
+                        : ElectricityPlanType.MULTI_TARIFF);
+        return plan != null ? plan.getDayTariff() : BigDecimal.ZERO;
+    }
+
+    public BigDecimal getElectricNightTariff(Flat flat, Meter electric) {
+        ElectricityPlan plan = findElectricPlan(flat, electric,
+                electric.getType() == MeterType.ELECTRICITY_TWO
+                        ? ElectricityPlanType.TWO_TARIFF
+                        : ElectricityPlanType.MULTI_TARIFF);
+        return plan != null ? plan.getNightTariff() : BigDecimal.ZERO;
+    }
+
+    // при многотарифном, если нужно, добавь:
+    public BigDecimal getElectricPeakTariff(Flat flat, Meter electric) {
+        ElectricityPlan plan = findElectricPlan(flat, electric, ElectricityPlanType.MULTI_TARIFF);
+        return plan != null ? plan.getPeakTariff() : BigDecimal.ZERO;
+    }
+
 }
 

@@ -81,13 +81,13 @@ public class MosRuTariffLoader {
         }
 
         // вода / водоотведение
-        LocalDate today = LocalDate.now();
+        //LocalDate today = LocalDate.now();
         int waterCount = 0;
 
         for (MosRuCells64058 c : otherRows) {
             Tariff t = TariffMapper.toTariff(c);
             if (t == null) continue;
-            if (!TariffMapper.isActiveOnDate(t, today)) continue;
+            //if (!TariffMapper.isActiveOnDate(t, today)) continue;
 
             repo.saveTariff(t);
             waterCount++;
@@ -98,10 +98,10 @@ public class MosRuTariffLoader {
         var plans = ElectricityPlanBuilder.buildPlans(electricityRows);
         for (ElectricityPlan p : plans) {
             // фильтр по дате
-            LocalDate start = p.getStartDate();
-            LocalDate end = p.getEndDate();
-            if (start != null && today.isBefore(start)) continue;
-            if (end != null && today.isAfter(end)) continue;
+//            LocalDate start = p.getStartDate();
+//            LocalDate end = p.getEndDate();
+//            if (start != null && today.isBefore(start)) continue;
+//            if (end != null && today.isAfter(end)) continue;
 
             repo.saveElectricityPlan(p);
             elecCount++;
