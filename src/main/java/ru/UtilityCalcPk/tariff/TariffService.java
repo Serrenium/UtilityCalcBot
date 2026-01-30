@@ -156,13 +156,29 @@ public class TariffService {
         String provider = electric.getProviderShort();
         String stove = electric.getStoveType();
 
+        // временный лог для проверки
+        System.out.println("Plans for today:");
+        for (ElectricityPlan p : plans) {
+            System.out.println("provider=" + p.getProviderShort()
+                    + ", stoveType=" + p.getStoveType()
+                    + ", type=" + p.getType()
+                    + ", day=" + p.getDayTariff());
+        }
+        System.out.println("Looking for provider=" + provider
+                + ", stove=" + stove
+                + ", type=" + planType);
+
         return plans.stream()
-                .filter(p -> p.getProviderShort().equalsIgnoreCase(provider))
+                .filter(p -> p.getProviderShort() != null
+                        && provider != null
+                        && p.getProviderShort().equalsIgnoreCase(provider))
                 .filter(p -> {
-                    // stoveType у планов и в Meter могут отличаться по регистру, учитываем это
-                    String ps = p.getStoveType();
-                    if (ps == null || stove == null) return false;
-                    return ps.equalsIgnoreCase(stove);
+                    if (stove == null || p.getStoveType() == null) return false;
+                    String ps = p.getStoveType().toLowerCase();
+                    String s = stove.toLowerCase();
+                    // допускаем частичные совпадения
+                    return ps.contains("газ") && s.contains("газ")
+                            || ps.contains("электр") && s.contains("электр");
                 })
                 .filter(p -> p.getType() == planType)
                 .findFirst()
