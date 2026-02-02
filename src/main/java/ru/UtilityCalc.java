@@ -164,6 +164,7 @@ public class UtilityCalc extends TelegramLongPollingBot {
                 return;
 
             } else if (text.equals("/tariffs")) {
+                tariffService.ensureTariffsUpToDate();
                 String tariffsText = tariffService.formatTodayTariffsForBot();
                 msg.setText(tariffsText);
 
@@ -1018,6 +1019,8 @@ public class UtilityCalc extends TelegramLongPollingBot {
         BigDecimal hotUsage = session.hotCurrent.subtract(hotStart);
 
         BigDecimal sewerUsage = coldUsage.add(hotUsage); // водоотведение
+
+        tariffService.ensureTariffsUpToDate(); // проверим атуальные ли тарифы загружены в бд
 
         // Тарифы: здесь псевдо‑код, ты знаешь свою TariffService лучше
         BigDecimal coldTariff = tariffService.getColdWaterTariff(flat);     // м³

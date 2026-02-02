@@ -4,6 +4,7 @@ import ru.UtilityCalcPk.flat.Flat;
 import ru.UtilityCalcPk.meter.Meter;
 import ru.UtilityCalcPk.meter.MeterType;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -210,6 +211,34 @@ public class TariffService {
     public BigDecimal getElectricPeakTariff(Flat flat, Meter electric) {
         ElectricityPlan plan = findElectricPlan(flat, electric, ElectricityPlanType.MULTI_TARIFF);
         return plan != null ? plan.getPeakTariff() : BigDecimal.ZERO;
+    }
+
+    public void ensureTariffsUpToDate() {
+        LocalDate today = LocalDate.now();
+
+        if (today.getDayOfMonth() != 1) {
+            return; // обновляем только 1-го числа
+        }
+
+        LocalDate last = repository.getLastUpdateDate();
+        if (last != null && last.getYear() == today.getYear() && last.getMonth() == today.getMonth()) {
+            return; // в этом месяце уже обновляли
+        }
+
+        // перезагружаем тарифы с mos.ru (твоя логика)
+        // можно предварительно очистить старые записи, если нужно
+
+        try {
+            MosRuTariffLoader.load(repository);
+            repository.setLastUpdateDate(today);
+        } catch (IOException e) {
+            // сеть / формат mos.ru
+            e.printStackTrace();
+            // можно sendText себе в личку или записать в лог-файл
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt(); // корректно помечаем поток
+            e.printStackTrace();
+        }
     }
 
 }

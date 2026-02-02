@@ -35,6 +35,40 @@ public class Db {
                   initial_peak NUMERIC
                 )
                 """);
+
+            st.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS tariffs (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  service TEXT NOT NULL,
+                  provider_short TEXT NOT NULL,
+                  value NUMERIC NOT NULL,
+                  unit TEXT NOT NULL,
+                  start_date TEXT,
+                  end_date TEXT
+                )
+                """);
+
+            st.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS electricity_plans (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  provider_short TEXT NOT NULL,
+                  stove_type TEXT NOT NULL,
+                  type TEXT NOT NULL,
+                  start_date TEXT,
+                  end_date TEXT,
+                  day_tariff NUMERIC,
+                  night_tariff NUMERIC,
+                  peak_tariff NUMERIC
+                )
+                """);
+
+            st.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS tariff_updates (
+                  id INTEGER PRIMARY KEY CHECK (id = 1),
+                  last_update_date TEXT
+                )
+                """);
+
         } catch (SQLException e) {
             throw new RuntimeException(e);
         }
