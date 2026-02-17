@@ -90,6 +90,37 @@ public class TariffRepository {
         return result;
     }
 
+    public List<Tariff> listTariffs() {
+        String sql = """
+            SELECT service, provider_short, value, unit, start_date, end_date
+            FROM tariffs
+            """;
+        List<Tariff> result = new ArrayList<>();
+
+        try (Connection c = Db.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+
+            while (rs.next()) {
+                Tariff t = new Tariff();
+                t.setService(ServiceType.valueOf(rs.getString("service")));
+                t.setProviderShort(rs.getString("provider_short"));
+                t.setValue(rs.getBigDecimal("value"));
+                t.setUnit(rs.getString("unit"));
+
+                String s = rs.getString("start_date");
+                String e = rs.getString("end_date");
+                if (s != null) t.setStartDate(LocalDate.parse(s));
+                if (e != null) t.setEndDate(LocalDate.parse(e));
+
+                result.add(t);
+            }
+        } catch (SQLException ex) {
+            throw new RuntimeException(ex);
+        }
+        return result;
+    }
+
     public List<ElectricityPlan> findActiveElectricityPlans(LocalDate date) {
         String sql = """
             SELECT provider_short, stove_type, type,
@@ -160,4 +191,22 @@ public class TariffRepository {
             throw new RuntimeException(e);
         }
     }
+    public void deleteAllTariffs() {
+        try (Connection c = Db.getConnection();
+             PreparedStatement ps = c.prepareStatement("DELETE FROM tariffs")) {
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public void deleteAllElectricityPlans() {
+        try (Connection c = Db.getConnection();
+             PreparedStatement ps = c.prepareStatement("DELETE FROM electricity_plans")) {
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
 }

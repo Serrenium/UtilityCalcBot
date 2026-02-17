@@ -53,8 +53,9 @@ public class BotTestMain {
             FlatRepository flatRepository = new FlatRepository(); // если есть конструктор
             MeterRepository meterRepository = new MeterRepository();
             TariffRepository repo = new TariffRepository();
-            MosRuTariffLoader.load(repo);
+//            MosRuTariffLoader.load(repo);
             TariffService tariffService = new TariffService(repo);
+            tariffService.ensureTariffsUpToDate();
 
             UtilityCalc bot = new UtilityCalc(tariffService, flatRepository, meterRepository);
 
@@ -63,7 +64,7 @@ public class BotTestMain {
 
             System.out.println("✅ Бот успешно запущен и ожидает сообщения...");
 
-        } catch (TelegramApiException | IOException | InterruptedException e) {
+        } catch (TelegramApiException e) {
             System.err.println("❌ Ошибка при запуске бота:");
             e.printStackTrace();
         }
