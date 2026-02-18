@@ -47,30 +47,46 @@ public class UtilityCalc extends TelegramLongPollingBot {
         String tempStoveType; // для электричества
     }
 
-    enum AddFlatState {
+    enum AddFlatFlowState {
         NONE,
-        CONFIRM_DEFAULT_NAME,
-        ENTERING_CUSTOM_NAME
-    }
-
-    class AddFlatSession {
-        AddFlatState state = AddFlatState.NONE;
-        String tempName; // если понадобится
-    }
-    enum OnboardingState {
-        NONE,
+        ASKING_NAME,
         ASKING_STOVE_TYPE,
         ASKING_ELECTRIC_METER_TYPE,
-        ASKING_INITIAL_READINGS_WATER_COLD,
-        ASKING_INITIAL_READINGS_WATER_HOT,
-        ASKING_INITIAL_READINGS_ELECTRIC
+        ASKING_INITIAL_WATER_COLD,
+        ASKING_INITIAL_WATER_HOT,
+        ASKING_INITIAL_ELECTRIC
     }
 
-    class OnboardingSession {
-        OnboardingState state = OnboardingState.NONE;
-        Long defaultFlatId;
+    class AddFlatFlowSession {
+        AddFlatFlowState state = AddFlatFlowState.NONE;
+        Long flatId;
         Long electricMeterId;
     }
+//
+//    enum AddFlatState {
+//        NONE,
+//        CONFIRM_DEFAULT_NAME,
+//        ENTERING_CUSTOM_NAME
+//    }
+//
+//    class AddFlatSession {
+//        AddFlatState state = AddFlatState.NONE;
+//        String tempName; // если понадобится
+//    }
+//    enum OnboardingState {
+//        NONE,
+//        ASKING_STOVE_TYPE,
+//        ASKING_ELECTRIC_METER_TYPE,
+//        ASKING_INITIAL_READINGS_WATER_COLD,
+//        ASKING_INITIAL_READINGS_WATER_HOT,
+//        ASKING_INITIAL_READINGS_ELECTRIC
+//    }
+
+//    class OnboardingSession {
+//        OnboardingState state = OnboardingState.NONE;
+//        Long defaultFlatId;
+//        Long electricMeterId;
+//    }
     enum CalcState {
         NONE,
         ASKING_COLD,
@@ -90,8 +106,9 @@ public class UtilityCalc extends TelegramLongPollingBot {
     private final MeterRepository meterRepository;
 
     private final Map<Long, AddMeterSession> addMeterSessions = new HashMap<>();
-    private final Map<Long, AddFlatSession> addFlatSessions = new HashMap<>();
-    private final Map<Long, OnboardingSession> onboardingSessions = new HashMap<>();
+    private final Map<Long, AddFlatFlowSession> addFlatFlowSessions = new HashMap<>();
+//    private final Map<Long, AddFlatSession> addFlatSessions = new HashMap<>();
+//    private final Map<Long, OnboardingSession> onboardingSessions = new HashMap<>();
     private final Map<Long, CalcSession> calcSessions = new HashMap<>();
 
     public UtilityCalc(TariffService tariffService,
@@ -145,21 +162,26 @@ public class UtilityCalc extends TelegramLongPollingBot {
             // иначе обычные команды
             SendMessage msg = new SendMessage();
             msg.setChatId(chatId.toString());
-            msg.setReplyMarkup(buildInlineMenu());
+            //msg.setReplyMarkup(buildInlineMenu());
 
-            if (command.equals("/calc")) {
+            if (command.equals("/start")) {
+                /*  /start: Если квартир нет - вывести приветствие c +Квартира
+                Но если есть - Главный экран - Квартира (№1). */
+                if (!flatRepository.hasFlats(chatId)) {
+                    sendWelcomeScreen(chatId);
+                } else {
+                    sendMainScreen(chatId);
+                }
+
+            } else if (command.equals("/calc")) {
                 startCalcFlow(chatId, msg);
 
             } else if (command.equals("/tariffs")) {
                 tariffService.ensureTariffsUpToDate();
                 msg.setText(tariffService.formatTodayTariffsForBot());
 
-            } else if (command.equals("/start")) {
-                startOnboarding(update);
-                return;
-
             } else if (command.equals("/addflat")) {
-                startAddFlat(chatId, msg);
+                startAddFlatFlow(chatId);
                 return;
 
             } else if (command.equals("/addmeter")) {
@@ -220,11 +242,194 @@ public class UtilityCalc extends TelegramLongPollingBot {
         }
     }
 
+    private void sendWelcomeScreen(Long chatId) {
+        String text = """
+            Привет! Я бот для учёта коммунальных платежей в Москве.
+
+            • Сохраняю показания счётчиков воды и электричества
+            • Считаю расход и сумму к оплате по актуальным тарифам mos.ru
+
+            Давай начнём с добавления твоей первой квартиры.
+            """;
+
+        SendMessage msg = new SendMessage(chatId.toString(), text);
+        msg.setReplyMarkup(buildWelcomeInlineMenu());
+        try {
+            execute(msg);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void sendMainScreen(Long chatId) {
+        List<Flat> flats = flatRepository.findByChatId(chatId);
+        if (flats.isEmpty()) {
+            sendWelcomeScreen(chatId);
+            return;
+        }
+
+        Flat flat = flats.get(0); // пока просто первая
+        List<Meter> meters = meterRepository.findByFlat(chatId, flat.getId());
+
+        Meter cold = meters.stream()
+                .filter(m -> m.getType() == MeterType.WATER_COLD)
+                .findFirst().orElse(null);
+        Meter hot = meters.stream()
+                .filter(m -> m.getType() == MeterType.WATER_HOT)
+                .findFirst().orElse(null);
+        Meter el = meters.stream()
+                .filter(m -> m.getType() == MeterType.ELECTRICITY_ONE
+                        || m.getType() == MeterType.ELECTRICITY_TWO
+                        || m.getType() == MeterType.ELECTRICITY_MULTI)
+                .findFirst().orElse(null);
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("Квартира: ").append(flat.getName()).append("\n\n");
+
+        // Холодная
+        sb.append("• Холодная вода: ");
+        if (cold != null && cold.getInitialReading() != null && cold.getInitialReading().getTotal() != null) {
+            sb.append(cold.getInitialReading().getTotal()).append(" м³");
+        } else {
+            sb.append("нет данных");
+        }
+        sb.append("\n");
+
+        // Горячая
+        sb.append("• Горячая вода: ");
+        if (hot != null && hot.getInitialReading() != null && hot.getInitialReading().getTotal() != null) {
+            sb.append(hot.getInitialReading().getTotal()).append(" м³");
+        } else {
+            sb.append("нет данных");
+        }
+        sb.append("\n");
+
+        // Электроэнергия
+        sb.append("• Электроэнергия:\n");
+        if (el != null && el.getInitialReading() != null) {
+            InitialReading r = el.getInitialReading();
+            switch (el.getType()) {
+                case ELECTRICITY_ONE -> {
+                    sb.append(r.getTotal() != null ? r.getTotal() : "нет данных")
+                            .append(" кВт·ч\n");
+                }
+                case ELECTRICITY_TWO -> {
+                    sb.append("   день: ")
+                            .append(r.getDay() != null ? r.getDay() : "—")
+                            .append(" кВт·ч\n");
+                    sb.append("   ночь: ")
+                            .append(r.getNight() != null ? r.getNight() : "—")
+                            .append(" кВт·ч\n");
+                }
+                case ELECTRICITY_MULTI -> {
+                    sb.append("   день: ")
+                            .append(r.getDay() != null ? r.getDay() : "—")
+                            .append(" кВт·ч\n");
+                    sb.append("   ночь: ")
+                            .append(r.getNight() != null ? r.getNight() : "—")
+                            .append(" кВт·ч\n");
+                    sb.append("   пик: ")
+                            .append(r.getPeak() != null ? r.getPeak() : "—")
+                            .append(" кВт·ч\n");
+                }
+            }
+        } else {
+            sb.append("   нет данных\n");
+        }
+
+        SendMessage msg = new SendMessage(chatId.toString(), sb.toString());
+        msg.setReplyMarkup(buildMainInlineMenu());
+        try {
+            execute(msg);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private InlineKeyboardMarkup buildWelcomeInlineMenu() {
+        InlineKeyboardButton addFlat = new InlineKeyboardButton("🏠 +Квартира");
+        addFlat.setCallbackData("start_add_flat");   // будет запускать онбординг
+
+        InlineKeyboardButton tariffs = new InlineKeyboardButton("💰 Тарифы");
+        tariffs.setCallbackData("start_tariffs");
+
+        List<List<InlineKeyboardButton>> rows = List.of(
+                List.of(addFlat, tariffs)
+        );
+
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        markup.setKeyboard(rows);
+        return markup;
+    }
+
+    private InlineKeyboardMarkup buildMainInlineMenu() {
+        InlineKeyboardButton calc = new InlineKeyboardButton("🧮 Расчёт");
+        calc.setCallbackData("main_calc");
+
+        InlineKeyboardButton tariffs = new InlineKeyboardButton("💰 Тарифы");
+        tariffs.setCallbackData("main_tariffs");
+
+        InlineKeyboardButton addFlat = new InlineKeyboardButton("🏠 +Квартира");
+        addFlat.setCallbackData("main_add_flat");
+
+        InlineKeyboardButton addMeter = new InlineKeyboardButton("⚡ +Счётчик");
+        addMeter.setCallbackData("main_add_meter");
+
+        InlineKeyboardButton flatsBtn = new InlineKeyboardButton("📋 Мои квартиры");
+        flatsBtn.setCallbackData("main_flats");
+
+        List<List<InlineKeyboardButton>> rows = List.of(
+                List.of(calc, tariffs),
+                List.of(addFlat, addMeter),
+                List.of(flatsBtn)
+        );
+
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        markup.setKeyboard(rows);
+        return markup;
+    }
+
     private void handleCallback(Update update) throws TelegramApiException {
         String data = update.getCallbackQuery().getData();
         Long chatId = update.getCallbackQuery().getMessage().getChatId();
 
+        AddFlatFlowSession flatFlow = addFlatFlowSessions.get(chatId);
+
         switch (data) {
+            case "start_add_flat" -> {
+                startAddFlatFlow(chatId);
+            }
+            case "start_tariffs" -> {
+                tariffService.ensureTariffsUpToDate();
+                SendMessage msg = new SendMessage(chatId.toString(), tariffService.formatTodayTariffsForBot());
+                msg.setReplyMarkup(buildWelcomeInlineMenu());
+                execute(msg);
+            }
+            case "main_calc" -> {
+                // старт calc‑флоу
+                SendMessage msg = new SendMessage(chatId.toString(), "Запускаем расчёт…");
+                msg.setReplyMarkup(buildMainInlineMenu());
+//                execute(msg);
+                // либо сразу
+                startCalcFlow(chatId, msg);
+            }
+            case "main_tariffs" -> {
+                tariffService.ensureTariffsUpToDate();
+                SendMessage msg = new SendMessage(chatId.toString(), tariffService.formatTodayTariffsForBot());
+                msg.setReplyMarkup(buildMainInlineMenu());
+                execute(msg);
+            }
+            case "main_add_flat" -> {
+                startAddFlatFlow(chatId);
+            }
+            case "main_add_meter" -> {
+                handleAddMeterCommand(chatId); // если переделал на chatId
+            }
+            case "main_flats" -> {
+                SendMessage msg = new SendMessage(chatId.toString(), formatFlatsAndMeters(chatId));
+                msg.setReplyMarkup(buildMainInlineMenu());
+                execute(msg);
+            }
             case "action_calc" -> {
                 SendMessage msg = new SendMessage(chatId.toString(), "Запускаем расчёт…");
                 msg.setReplyMarkup(buildInlineMenu());
@@ -239,7 +444,7 @@ public class UtilityCalc extends TelegramLongPollingBot {
             case "action_addflat" -> {
                 SendMessage msg = new SendMessage();
                 msg.setChatId(chatId.toString());
-                startAddFlat(chatId, msg);
+                startAddFlatFlow(chatId);
             }
             case "action_addmeter" -> {
                 handleAddMeterCommand(chatId);
@@ -249,6 +454,101 @@ public class UtilityCalc extends TelegramLongPollingBot {
                 msg.setReplyMarkup(buildInlineMenu());
                 execute(msg);
             }
+
+            case "flat_stove_gas" -> {
+                if (flatFlow == null || flatFlow.state != AddFlatFlowState.ASKING_STOVE_TYPE) return;
+
+                Meter el = getElectricMeter(chatId, flatFlow.electricMeterId);
+                if (el == null) {
+                    sendText(chatId, "Не удалось найти электросчётчик.");
+                    flatFlow.state = AddFlatFlowState.NONE;
+                    return;
+                }
+                el.setStoveType("газовая плита");
+                meterRepository.save(el);
+
+                flatFlow.state = AddFlatFlowState.ASKING_ELECTRIC_METER_TYPE;
+
+                SendMessage msg = new SendMessage();
+                msg.setChatId(chatId.toString());
+                msg.setText("Выбери тип электросчётчика:");
+                msg.setReplyMarkup(buildElectricMeterTypeMenu());
+                execute(msg);
+            }
+
+            case "flat_stove_electric" -> {
+                if (flatFlow == null || flatFlow.state != AddFlatFlowState.ASKING_STOVE_TYPE) return;
+
+                Meter el = getElectricMeter(chatId, flatFlow.electricMeterId);
+                if (el == null) {
+                    sendText(chatId, "Не удалось найти электросчётчик.");
+                    flatFlow.state = AddFlatFlowState.NONE;
+                    return;
+                }
+                el.setStoveType("электроплита");
+                meterRepository.save(el);
+
+                flatFlow.state = AddFlatFlowState.ASKING_ELECTRIC_METER_TYPE;
+
+                SendMessage msg = new SendMessage();
+                msg.setChatId(chatId.toString());
+                msg.setText("Выбери тип электросчётчика:");
+                msg.setReplyMarkup(buildElectricMeterTypeMenu());
+                execute(msg);
+            }
+            case "flat_emeter_one" -> {
+                if (flatFlow == null || flatFlow.state != AddFlatFlowState.ASKING_ELECTRIC_METER_TYPE) return;
+
+                Meter el = getElectricMeter(chatId, flatFlow.electricMeterId);
+                if (el == null) {
+                    sendText(chatId, "Не удалось найти электросчётчик.");
+                    flatFlow.state = AddFlatFlowState.NONE;
+                    return;
+                }
+                el.setType(MeterType.ELECTRICITY_ONE);
+                meterRepository.save(el);
+
+                sendText(chatId,
+                        "Теперь введём первые показания.\n" +
+                                "Сначала холодная вода (одно число, например 123):");
+                flatFlow.state = AddFlatFlowState.ASKING_INITIAL_WATER_COLD;
+            }
+
+            case "flat_emeter_two" -> {
+                if (flatFlow == null || flatFlow.state != AddFlatFlowState.ASKING_ELECTRIC_METER_TYPE) return;
+
+                Meter el = getElectricMeter(chatId, flatFlow.electricMeterId);
+                if (el == null) {
+                    sendText(chatId, "Не удалось найти электросчётчик.");
+                    flatFlow.state = AddFlatFlowState.NONE;
+                    return;
+                }
+                el.setType(MeterType.ELECTRICITY_TWO);
+                meterRepository.save(el);
+
+                sendText(chatId,
+                        "Теперь введём первые показания.\n" +
+                                "Сначала холодная вода (одно число, например 123):");
+                flatFlow.state = AddFlatFlowState.ASKING_INITIAL_WATER_COLD;
+            }
+
+            case "flat_emeter_multi" -> {
+                if (flatFlow == null || flatFlow.state != AddFlatFlowState.ASKING_ELECTRIC_METER_TYPE) return;
+
+                Meter el = getElectricMeter(chatId, flatFlow.electricMeterId);
+                if (el == null) {
+                    sendText(chatId, "Не удалось найти электросчётчик.");
+                    flatFlow.state = AddFlatFlowState.NONE;
+                    return;
+                }
+                el.setType(MeterType.ELECTRICITY_MULTI);
+                meterRepository.save(el);
+
+                sendText(chatId,
+                        "Теперь введём первые показания.\n" +
+                                "Сначала холодная вода (одно число, например 123):");
+                flatFlow.state = AddFlatFlowState.ASKING_INITIAL_WATER_COLD;
+            }
         }
     }
 
@@ -256,26 +556,21 @@ public class UtilityCalc extends TelegramLongPollingBot {
         AddMeterSession m = addMeterSessions.get(chatId);
         if (m != null && m.state != AddMeterState.NONE) return true;
 
-        AddFlatSession f = addFlatSessions.get(chatId);
-        if (f != null && f.state != AddFlatState.NONE) return true;
-
-        OnboardingSession o = onboardingSessions.get(chatId);
-        if (o != null && o.state != OnboardingState.NONE) return true;
+        AddFlatFlowSession f = addFlatFlowSessions.get(chatId);
+        if (f != null && f.state != AddFlatFlowState.NONE) return true;
 
         CalcSession c = calcSessions.get(chatId);
         return c != null && c.state != CalcState.NONE;
     }
 
-
-    private void handleActiveSession(Update update) {
+    private void handleActiveSession(Update update) throws TelegramApiException {
         Long chatId = update.getMessage().getChatId();
         String text = update.getMessage().getText().trim();
         if ("/start".equals(text) || "/cancel".equalsIgnoreCase(text)) {
             addMeterSessions.remove(chatId);
-            addFlatSessions.remove(chatId);
-            onboardingSessions.remove(chatId);
+            addFlatFlowSessions.remove(chatId);
             calcSessions.remove(chatId);
-            startOnboarding(update); // или просто sendText(...)
+            sendMainScreen(chatId);// Возврат в главное окно
             return;
         }
 
@@ -283,12 +578,8 @@ public class UtilityCalc extends TelegramLongPollingBot {
             continueAddMeter(update, addMeterSessions.get(chatId));
             return;
         }
-        if (addFlatSessions.containsKey(chatId) && addFlatSessions.get(chatId).state != AddFlatState.NONE) {
-            continueAddFlat(update, addFlatSessions.get(chatId));
-            return;
-        }
-        if (onboardingSessions.containsKey(chatId) && onboardingSessions.get(chatId).state != OnboardingState.NONE) {
-            continueOnboarding(update, onboardingSessions.get(chatId));
+        if (addFlatFlowSessions.containsKey(chatId) && addFlatFlowSessions.get(chatId).state != AddFlatFlowState.NONE) {
+            continueAddFlatFlow(update, addFlatFlowSessions.get(chatId));
             return;
         }
         if (calcSessions.containsKey(chatId) && calcSessions.get(chatId).state != CalcState.NONE) {
@@ -301,7 +592,7 @@ public class UtilityCalc extends TelegramLongPollingBot {
         msg.setChatId(chatId.toString());
         msg.setText(text);
         msg.setReplyMarkup(new ReplyKeyboardRemove(true)); // убрать нижнюю клавиатуру
-        msg.setReplyMarkup(buildInlineMenu());
+        //msg.setReplyMarkup(buildInlineMenu());
         try {
             execute(msg);
         } catch (TelegramApiException e) {
@@ -328,6 +619,7 @@ public class UtilityCalc extends TelegramLongPollingBot {
         keyboard.setKeyboard(Arrays.asList(row1, row2, row3));
         return keyboard;
     }
+
     private InlineKeyboardMarkup buildInlineMenu() {
         InlineKeyboardButton calcBtn = new InlineKeyboardButton("🧮 Расчёт");
         calcBtn.setCallbackData("action_calc");
@@ -354,6 +646,44 @@ public class UtilityCalc extends TelegramLongPollingBot {
         markup.setKeyboard(rows);
         return markup;
     }
+
+    private InlineKeyboardMarkup buildStoveInlineMenu() {
+        InlineKeyboardButton gas = new InlineKeyboardButton("Газовая");
+        gas.setCallbackData("flat_stove_gas");
+
+        InlineKeyboardButton electric = new InlineKeyboardButton("Электрическая");
+        electric.setCallbackData("flat_stove_electric");
+
+        List<List<InlineKeyboardButton>> rows = List.of(
+                List.of(gas, electric)
+        );
+
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        markup.setKeyboard(rows);
+        return markup;
+    }
+
+    private InlineKeyboardMarkup buildElectricMeterTypeMenu() {
+        InlineKeyboardButton one = new InlineKeyboardButton("Однотарифный");
+        one.setCallbackData("flat_emeter_one");
+
+        InlineKeyboardButton two = new InlineKeyboardButton("Двухтарифный");
+        two.setCallbackData("flat_emeter_two");
+
+        InlineKeyboardButton multi = new InlineKeyboardButton("Многотарифный");
+        multi.setCallbackData("flat_emeter_multi");
+
+        List<List<InlineKeyboardButton>> rows = List.of(
+                List.of(one),
+                List.of(two),
+                List.of(multi)
+        );
+
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        markup.setKeyboard(rows);
+        return markup;
+    }
+
     private void startCalcFlow(Long chatId, SendMessage msg) {
         tariffService.ensureTariffsUpToDate(); // проверим атуальные ли тарифы загружены в бд
 
@@ -373,33 +703,15 @@ public class UtilityCalc extends TelegramLongPollingBot {
         }
     }
 
-    private void startOnboarding(Update update) {
-        Long chatId = update.getMessage().getChatId();
-        if (flatRepository.hasFlats(chatId)) {
-            sendText(chatId, "У вас уже есть квартира. Используйте /addflat или /addmeter.");
-            return;
-        }
-        ensureDefaultSetup(chatId);
-        sendText(chatId, "Создана квартира «Моя квартира» с тремя счётчиками.");
-        startOnboardingElectricity(update);
-    }
+    private void startAddFlatFlow(Long chatId) {
+        AddFlatFlowSession s = addFlatFlowSessions.computeIfAbsent(chatId, id -> new AddFlatFlowSession());
+        s.state = AddFlatFlowState.ASKING_NAME;
+        s.flatId = null;
+        s.electricMeterId = null;
 
-    private void startAddFlat(Long chatId, SendMessage msg) {
-        boolean hasDefault = flatRepository.existsByChatIdAndName(chatId, "Моя квартира");
-        AddFlatSession s = addFlatSessions.computeIfAbsent(chatId, id -> new AddFlatSession());
-
-        if (hasDefault) {
-            s.state = AddFlatState.ENTERING_CUSTOM_NAME;
-            msg.setText("Как назовём новую квартиру?");
-        } else {
-            s.state = AddFlatState.CONFIRM_DEFAULT_NAME;
-            msg.setText("Имя «Моя квартира» подойдёт?\nОтветьте «Да» или «Нет».");
-        }
-        try {
-            execute(msg);
-        } catch (TelegramApiException e) {
-            e.printStackTrace();
-        }
+        sendText(chatId,
+                "Давай добавим квартиру.\n\n" +
+                        "Введи название, например: «на Пушкинской».");
     }
 
     private void deleteFlat(Long chatId, String text, SendMessage msg) {
@@ -466,50 +778,209 @@ public class UtilityCalc extends TelegramLongPollingBot {
 //            return;
 //        }
 //    }
+    private void continueAddFlatFlow(Update update, AddFlatFlowSession session) throws TelegramApiException {
+    Long chatId = update.getMessage().getChatId();
+    String text = update.getMessage().getText().trim();
 
-    private void continueAddFlat(Update update, AddFlatSession session) {
-        Long chatId = update.getMessage().getChatId();
-        String text = update.getMessage().getText().trim();
+    switch (session.state) {
+        case ASKING_NAME -> {
+            String name = text;
+            if (name.isEmpty()) {
+                sendText(chatId, "Название не может быть пустым. Введите название квартиры.");
+                return;
+            }
+            if (flatRepository.existsByChatIdAndName(chatId, name)) {
+                sendText(chatId, "Квартира с таким названием уже есть. Введите другое название.");
+                return;
+            }
 
-        switch (session.state) {
-            case CONFIRM_DEFAULT_NAME -> {
-                if (text.equalsIgnoreCase("да")) {
-                    Flat flat = new Flat();
-                    flat.setChatId(chatId);
-                    flat.setName("Моя квартира");
-                    flatRepository.save(flat);
+            // создаём квартиру
+            Flat flat = new Flat();
+            flat.setChatId(chatId);
+            flat.setName(name);
+            flatRepository.save(flat);
+            session.flatId = flat.getId();
 
-                    sendText(chatId,
-                            "Квартира добавлена: Моя квартира\n\n" +
-                                    "Теперь вы можете добавить счётчики командой /addmeter.");
-                    session.state = AddFlatState.NONE;
-                } else if (text.equalsIgnoreCase("нет")) {
-                    sendText(chatId,
-                            "Введите название новой квартиры (например, «Квартира на Пушкина»).");
-                    session.state = AddFlatState.ENTERING_CUSTOM_NAME;
-                } else {
-                    sendText(chatId, "Ответьте, пожалуйста, «Да» или «Нет».");
+            // создаём стандартные счётчики
+            Meter cold = new Meter();
+            cold.setChatId(chatId);
+            cold.setFlatId(flat.getId());
+            cold.setType(MeterType.WATER_COLD);
+            cold.setProviderShort("Мосводоканал");
+            cold.setInitialReading(new InitialReading());
+            meterRepository.save(cold);
+
+            Meter hot = new Meter();
+            hot.setChatId(chatId);
+            hot.setFlatId(flat.getId());
+            hot.setType(MeterType.WATER_HOT);
+            hot.setProviderShort("МОЭК");
+            hot.setInitialReading(new InitialReading());
+            meterRepository.save(hot);
+
+            Meter el = new Meter();
+            el.setChatId(chatId);
+            el.setFlatId(flat.getId());
+            el.setType(MeterType.ELECTRICITY_ONE); // пока что, уточним дальше
+            el.setProviderShort("Мосэнергосбыт");
+            el.setInitialReading(new InitialReading());
+            meterRepository.save(el);
+
+            session.electricMeterId = el.getId();
+
+            session.state = AddFlatFlowState.ASKING_STOVE_TYPE;
+            SendMessage msg = new SendMessage();
+            msg.setChatId(chatId.toString());
+            msg.setText("Добавил квартиру «" + name + "».\n\n" +
+                    "Выбери тип плиты в квартире:");
+            msg.setReplyMarkup(buildStoveInlineMenu());
+            execute(msg);
+        }
+
+        case ASKING_STOVE_TYPE -> {
+
+        }
+
+        case ASKING_ELECTRIC_METER_TYPE -> {
+
+        }
+
+        case ASKING_INITIAL_WATER_COLD -> {
+            BigDecimal value;
+            try {
+                value = new BigDecimal(text.replace(',', '.'));
+            } catch (NumberFormatException e) {
+                sendText(chatId, "Не удалось распознать число. Введите показания ещё раз.");
+                return;
+            }
+
+            Flat flat = flatRepository.findByChatId(chatId).stream()
+                    .filter(f -> f.getId().equals(session.flatId))
+                    .findFirst().orElse(null);
+            if (flat != null) {
+                List<Meter> meters = meterRepository.findByFlat(chatId, flat.getId());
+                Meter cold = meters.stream()
+                        .filter(m -> m.getType() == MeterType.WATER_COLD)
+                        .findFirst().orElse(null);
+                if (cold != null) {
+                    InitialReading r = cold.getInitialReading();
+                    if (r == null) r = new InitialReading();
+                    r.setTotal(value);
+                    cold.setInitialReading(r);
+                    meterRepository.save(cold);
                 }
             }
-            case ENTERING_CUSTOM_NAME -> {
-                String name = text;
-                if (name.isEmpty()) {
-                    sendText(chatId, "Название не может быть пустым. Введите название квартиры.");
-                    return;
+
+            sendText(chatId,
+                    "Теперь горячая вода (одно число, например 123):");
+            session.state = AddFlatFlowState.ASKING_INITIAL_WATER_HOT;
+        }
+
+        case ASKING_INITIAL_WATER_HOT -> {
+            BigDecimal value;
+            try {
+                value = new BigDecimal(text.replace(',', '.'));
+            } catch (NumberFormatException e) {
+                sendText(chatId, "Не удалось распознать число. Введите показания ещё раз.");
+                return;
+            }
+
+            Flat flat = flatRepository.findByChatId(chatId).stream()
+                    .filter(f -> f.getId().equals(session.flatId))
+                    .findFirst().orElse(null);
+            if (flat != null) {
+                List<Meter> meters = meterRepository.findByFlat(chatId, flat.getId());
+                Meter hot = meters.stream()
+                        .filter(m -> m.getType() == MeterType.WATER_HOT)
+                        .findFirst().orElse(null);
+                if (hot != null) {
+                    InitialReading r = hot.getInitialReading();
+                    if (r == null) r = new InitialReading();
+                    r.setTotal(value);
+                    hot.setInitialReading(r);
+                    meterRepository.save(hot);
                 }
+            }
+            // теперь электрический
+            Meter el = getElectricMeter(chatId, session.electricMeterId);
+            if (el == null) {
+                sendText(chatId, "Не удалось найти электросчётчик.");
+                session.state = AddFlatFlowState.NONE;
+                return;
+            }
+            sendText(chatId,
+                    "Теперь введи первые показания электросчётчика.\n");
 
-                Flat flat = new Flat();
-                flat.setChatId(chatId);
-                flat.setName(name);
-                flatRepository.save(flat);
-
+            if (el.getType() == MeterType.ELECTRICITY_ONE) {
+                sendText(chatId, "Однотарифный (одно число):");
+            } else if (el.getType() == MeterType.ELECTRICITY_TWO) {
                 sendText(chatId,
-                        "Квартира добавлена: " + name +
-                                "\n\nТеперь вы можете добавить счётчики командой /addmeter.");
-                session.state = AddFlatState.NONE;
+                        "Двухтарифный. Введи два числа через пробел: день и ночь.\n" +
+                                "Например: 1234 678");
+            } else {
+                sendText(chatId,
+                        "Многотарифный. Введите три числа через пробел: день, ночь, пик.\n" +
+                                "Например: 1234 678 123");
             }
+            session.state = AddFlatFlowState.ASKING_INITIAL_ELECTRIC;
+        }
+
+        case ASKING_INITIAL_ELECTRIC -> {
+            Meter el = getElectricMeter(chatId, session.electricMeterId);
+            if (el == null) {
+                sendText(chatId, "Не удалось найти электросчётчик.");
+                session.state = AddFlatFlowState.NONE;
+                return;
+            }
+
+            String[] parts = text.replace(',', '.').trim().split("\\s+");
+            InitialReading r = new InitialReading();
+
+            try {
+                switch (el.getType()) {
+                    case ELECTRICITY_ONE -> {
+                        if (parts.length != 1) {
+                            sendText(chatId, "Нужно одно число.");
+                            return;
+                        }
+                        r.setTotal(new BigDecimal(parts[0]));
+                    }
+                    case ELECTRICITY_TWO -> {
+                        if (parts.length != 2) {
+                            sendText(chatId, "Нужно два числа: день и ночь.");
+                            return;
+                        }
+                        r.setDay(new BigDecimal(parts[0]));
+                        r.setNight(new BigDecimal(parts[1]));
+                    }
+                    case ELECTRICITY_MULTI -> {
+                        if (parts.length != 3) {
+                            sendText(chatId, "Нужно три числа: день, ночь, пик.");
+                            return;
+                        }
+                        r.setDay(new BigDecimal(parts[0]));
+                        r.setNight(new BigDecimal(parts[1]));
+                        r.setPeak(new BigDecimal(parts[2]));
+                    }
+                }
+            } catch (NumberFormatException e) {
+                sendText(chatId, "Не удалось распознать числа. Введите показания ещё раз.");
+                return;
+            }
+
+            el.setInitialReading(r);
+            meterRepository.save(el);
+
+            // завершаем флоу и открываем главный экран
+            session.state = AddFlatFlowState.NONE;
+            sendMainScreen(chatId); // твой «главный экран» с главным меню
+        }
+
+        case NONE -> {
+            // ничего не делаем
         }
     }
+}
 
     private void handleAddMeterCommand(Long chatId) {
         AddMeterSession session = addMeterSessions.computeIfAbsent(chatId, id -> new AddMeterSession());
@@ -787,272 +1258,6 @@ public class UtilityCalc extends TelegramLongPollingBot {
         return sb.toString();
     }
 
-    private void ensureDefaultSetup(Long chatId) {
-        // если у пользователя уже есть хоть одна квартира — ничего не делаем
-        if (flatRepository.hasFlats(chatId)) {
-            return;
-        }
-
-        // создаём дефолтную квартиру
-        Flat flat = new Flat();
-        flat.setChatId(chatId);
-        flat.setName("Моя квартира");
-        flatRepository.save(flat); // id заполнится из БД
-
-        // холодная вода
-        Meter cold = new Meter();
-        cold.setChatId(chatId);
-        cold.setFlatId(flat.getId());
-        cold.setType(MeterType.WATER_COLD);
-        cold.setProviderShort("Мосводоканал");
-        cold.setInitialReading(new InitialReading()); // пока пусто
-        meterRepository.save(cold);
-
-        // горячая вода
-        Meter hot = new Meter();
-        hot.setChatId(chatId);
-        hot.setFlatId(flat.getId());
-        hot.setType(MeterType.WATER_HOT);
-        hot.setProviderShort("МОЭК");
-        hot.setInitialReading(new InitialReading());
-        meterRepository.save(hot);
-
-        // электроэнергия (тип и плита уточним потом)
-        Meter el = new Meter();
-        el.setChatId(chatId);
-        el.setFlatId(flat.getId());
-        el.setType(MeterType.ELECTRICITY_ONE); // временно однотарифный
-        el.setProviderShort("Мосэнергосбыт");
-        el.setInitialReading(new InitialReading());
-        meterRepository.save(el);
-    }
-    private void startOnboardingElectricity(Update update) {
-        Long chatId = update.getMessage().getChatId();
-
-        // найдём дефолтную квартиру и её электросчётчик
-        List<Flat> flats = flatRepository.findByChatId(chatId);
-        if (flats.isEmpty()) {
-            sendText(chatId, "Не удалось найти квартиру. Попробуйте ещё раз команду /start.");
-            return;
-        }
-        Flat flat = flats.stream()
-                .filter(f -> "Моя квартира".equals(f.getName()))
-                .findFirst()
-                .orElse(flats.get(0)); // на всякий случай
-
-        List<Meter> meters = meterRepository.findByFlat(chatId, flat.getId());
-        System.out.println("Meters for flat " + flat.getId());
-        for (Meter m : meters) {
-            System.out.println("  id=" + m.getId() + ", type=" + m.getType());
-        }
-        Meter electric = meters.stream()
-                .filter(m -> m.getType() == MeterType.ELECTRICITY_ONE
-                        || m.getType() == MeterType.ELECTRICITY_TWO
-                        || m.getType() == MeterType.ELECTRICITY_MULTI)
-                .findFirst()
-                .orElse(null);
-
-        if (electric == null) {
-            sendText(chatId, "Не найден электросчётчик. Попробуйте /addmeter.");
-            return;
-        }
-
-        OnboardingSession session = onboardingSessions.computeIfAbsent(chatId, id -> new OnboardingSession());
-        session.state = OnboardingState.ASKING_STOVE_TYPE;
-        session.defaultFlatId = flat.getId();
-        session.electricMeterId = electric.getId();
-
-        sendText(chatId,
-                "Какой у вас тип плиты?\n" +
-                        "1) Газовая плита\n" +
-                        "2) Электроплита\n\n" +
-                        "Отправьте номер варианта.");
-    }
-    private void continueOnboarding(Update update, OnboardingSession session) {
-        Long chatId = update.getMessage().getChatId();
-        String text = update.getMessage().getText().trim();
-
-        switch (session.state) {
-            case ASKING_STOVE_TYPE -> {
-                String stove;
-                if ("1".equals(text)) {
-                    stove = "газовая плита";
-                } else if ("2".equals(text)) {
-                    stove = "электроплита";
-                } else {
-                    sendText(chatId, "Нужно 1 или 2.");
-                    return;
-                }
-
-                // обновляем электросчётчик
-                Meter el = getElectricMeter(chatId, session.electricMeterId);
-                if (el == null) {
-                    sendText(chatId, "Не удалось найти электросчётчик.");
-                    session.state = OnboardingState.NONE;
-                    return;
-                }
-                el.setStoveType(stove);
-                meterRepository.save(el);
-
-                sendText(chatId,
-                        "Какой у вас электрический счётчик?\n" +
-                                "1) Однотарифный\n" +
-                                "2) Двухтарифный\n" +
-                                "3) Многотарифный\n\n" +
-                                "Отправьте номер варианта.");
-                session.state = OnboardingState.ASKING_ELECTRIC_METER_TYPE;
-            }
-            case ASKING_ELECTRIC_METER_TYPE -> {
-                MeterType type;
-                if ("1".equals(text)) {
-                    type = MeterType.ELECTRICITY_ONE;
-                } else if ("2".equals(text)) {
-                    type = MeterType.ELECTRICITY_TWO;
-                } else if ("3".equals(text)) {
-                    type = MeterType.ELECTRICITY_MULTI;
-                } else {
-                    sendText(chatId, "Нужно 1, 2 или 3.");
-                    return;
-                }
-
-                Meter el = getElectricMeter(chatId, session.electricMeterId);
-                if (el == null) {
-                    sendText(chatId, "Не удалось найти электросчётчик.");
-                    session.state = OnboardingState.NONE;
-                    return;
-                }
-                el.setType(type);
-                meterRepository.save(el);
-
-                sendText(chatId,
-                        "Теперь введите первые показания счётчиков.\n" +
-                                "Сначала холодная вода (одно число, например 123.45):");
-                session.state = OnboardingState.ASKING_INITIAL_READINGS_WATER_COLD;
-            }
-            case ASKING_INITIAL_READINGS_WATER_COLD -> {
-                BigDecimal value;
-                try {
-                    value = new BigDecimal(text.replace(',', '.'));
-                } catch (NumberFormatException e) {
-                    sendText(chatId, "Не удалось распознать число. Введите показания ещё раз.");
-                    return;
-                }
-
-                // найдём холодный счётчик и запишем
-                Flat flat = flatRepository.findByChatId(chatId).get(0);
-                List<Meter> meters = meterRepository.findByFlat(chatId, flat.getId());
-                Meter cold = meters.stream()
-                        .filter(m -> m.getType() == MeterType.WATER_COLD)
-                        .findFirst().orElse(null);
-                if (cold != null) {
-                    InitialReading r = cold.getInitialReading();
-                    if (r == null) r = new InitialReading();
-                    r.setTotal(value);
-                    cold.setInitialReading(r);
-                    meterRepository.save(cold);
-                }
-
-                sendText(chatId,
-                        "Теперь горячая вода (одно число, например 123.45):");
-                session.state = OnboardingState.ASKING_INITIAL_READINGS_WATER_HOT;
-            }
-            case ASKING_INITIAL_READINGS_WATER_HOT -> {
-                BigDecimal value;
-                try {
-                    value = new BigDecimal(text.replace(',', '.'));
-                } catch (NumberFormatException e) {
-                    sendText(chatId, "Не удалось распознать число. Введите показания ещё раз.");
-                    return;
-                }
-
-                Flat flat = flatRepository.findByChatId(chatId).get(0);
-                List<Meter> meters = meterRepository.findByFlat(chatId, flat.getId());
-                Meter hot = meters.stream()
-                        .filter(m -> m.getType() == MeterType.WATER_HOT)
-                        .findFirst().orElse(null);
-                if (hot != null) {
-                    InitialReading r = hot.getInitialReading();
-                    if (r == null) r = new InitialReading();
-                    r.setTotal(value);
-                    hot.setInitialReading(r);
-                    meterRepository.save(hot);
-                }
-
-                // теперь спросим электричество в зависимости от типа
-                Meter el = getElectricMeter(chatId, session.electricMeterId);
-                if (el == null) {
-                    sendText(chatId, "Не удалось найти электросчётчик.");
-                    session.state = OnboardingState.NONE;
-                    return;
-                }
-
-                if (el.getType() == MeterType.ELECTRICITY_ONE) {
-                    sendText(chatId,
-                            "Введите первые показания электросчётчика (одно число):");
-                } else if (el.getType() == MeterType.ELECTRICITY_TWO) {
-                    sendText(chatId,
-                            "Введите два числа через пробел: день и ночь.\n" +
-                                    "Например: 1234.5 678.9");
-                } else {
-                    sendText(chatId,
-                            "Введите три числа через пробел: день, ночь, пик.\n" +
-                                    "Например: 1234.5 678.9 12.3");
-                }
-                session.state = OnboardingState.ASKING_INITIAL_READINGS_ELECTRIC;
-            }
-            case ASKING_INITIAL_READINGS_ELECTRIC -> {
-                Meter el = getElectricMeter(chatId, session.electricMeterId);
-                if (el == null) {
-                    sendText(chatId, "Не удалось найти электросчётчик.");
-                    session.state = OnboardingState.NONE;
-                    return;
-                }
-
-                String[] parts = text.replace(',', '.').trim().split("\\s+");
-                InitialReading r = new InitialReading();
-
-                try {
-                    switch (el.getType()) {
-                        case ELECTRICITY_ONE -> {
-                            if (parts.length != 1) {
-                                sendText(chatId, "Нужно одно число. Попробуйте ещё раз.");
-                                return;
-                            }
-                            r.setTotal(new BigDecimal(parts[0]));
-                        }
-                        case ELECTRICITY_TWO -> {
-                            if (parts.length != 2) {
-                                sendText(chatId, "Нужно два числа: день и ночь.");
-                                return;
-                            }
-                            r.setDay(new BigDecimal(parts[0]));
-                            r.setNight(new BigDecimal(parts[1]));
-                        }
-                        case ELECTRICITY_MULTI -> {
-                            if (parts.length != 3) {
-                                sendText(chatId, "Нужно три числа: день, ночь, пик.");
-                                return;
-                            }
-                            r.setDay(new BigDecimal(parts[0]));
-                            r.setNight(new BigDecimal(parts[1]));
-                            r.setPeak(new BigDecimal(parts[2]));
-                        }
-                    }
-                } catch (NumberFormatException e) {
-                    sendText(chatId, "Не удалось распознать числа. Введите ещё раз.");
-                    return;
-                }
-
-                el.setInitialReading(r);
-                meterRepository.save(el);
-
-                sendText(chatId,
-                        "Готово! Квартира и счётчики настроены.\n" +
-                                "Теперь можно использовать /calc или /flats для просмотра.");
-                session.state = OnboardingState.NONE;
-            }
-        }
-    }
     private Meter getElectricMeter(Long chatId, Long meterId) {
         // можно сделать метод findById в MeterRepository, но пока обойдёмся:
         // если часто нужен, лучше добавить нормальный метод
@@ -1062,6 +1267,7 @@ public class UtilityCalc extends TelegramLongPollingBot {
                 .findFirst()
                 .orElse(null);
     }
+
     private void continueCalc(Update update, CalcSession session) {
         Long chatId = update.getMessage().getChatId();
         String text = update.getMessage().getText().trim();
@@ -1180,6 +1386,7 @@ public class UtilityCalc extends TelegramLongPollingBot {
             }
         }
     }
+
     private void finishCalc(Long chatId, CalcSession session, Flat flat, Meter electric) {
         List<Meter> meters = meterRepository.findByFlat(chatId, flat.getId());
 
@@ -1272,6 +1479,7 @@ public class UtilityCalc extends TelegramLongPollingBot {
 
         sendText(chatId, report.toString());
     }
+
     private void finishCalc1(Long chatId, CalcSession session, Flat flat, Meter electric) {
         List<Meter> meters = meterRepository.findByFlat(chatId, flat.getId());
 

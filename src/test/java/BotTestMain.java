@@ -19,15 +19,8 @@ import java.util.Map;
  * Устанавливает переменные окружения и запускает бота.
  */
 public class BotTestMain {
-    // тестовые данные
-    private static final String BOT_TOKEN = "8416190970:AAG2SEo65mlzUOXepBdq7e13gZeGRfOoL34";
-    private static final String BOT_USERNAME = "test_utility_calc_bot";
-    // ===========================================
 
     public static void main(String[] args) {
-        // Устанавливаем переменные окружения
-//        setEnv("TELEGRAM_BOT_TOKEN", BOT_TOKEN);
-//        setEnv("TELEGRAM_BOT_USERNAME", BOT_USERNAME);
 
         // Проверяем, что бот может стартовать
         String token = System.getenv("TELEGRAM_BOT_TOKEN");
@@ -67,24 +60,6 @@ public class BotTestMain {
         } catch (TelegramApiException e) {
             System.err.println("❌ Ошибка при запуске бота:");
             e.printStackTrace();
-        }
-    }
-
-    /**
-     * Утилита для установки переменных окружения через рефлексию.
-     * Работает на OpenJDK / Oracle JDK 8–17. Не используйте в продакшене.
-     */
-    @SuppressWarnings("unchecked")
-    private static void setEnv(String key, String value) {
-        try {
-            Map<String, String> env = System.getenv();
-            Class<?> clazz = env.getClass();
-            Field field = clazz.getDeclaredField("m");
-            field.setAccessible(true);
-            Map<String, String> map = (Map<String, String>) field.get(env);
-            map.put(key, value);
-        } catch (Exception e) {
-            throw new RuntimeException("Не удалось установить переменную окружения: " + key, e);
         }
     }
 }
