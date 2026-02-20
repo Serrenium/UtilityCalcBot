@@ -352,12 +352,15 @@ public class TariffService {
      */
     public void ensureTariffsUpToDate() {
         LocalDate today = LocalDate.now();
-
+        List<Tariff> active = repository.findActiveByDate(today);
         LocalDate last = repository.getLastUpdateDate();
-        if (last != null && last.getYear() == today.getYear() && last.getMonth() == today.getMonth()) {
-            return; // в этом месяце уже обновляли
+
+        if (last != null && last.getYear() == today.getYear() && last.getMonth() == today.getMonth()
+                && !active.isEmpty()) {
+            return; // в этом месяце уже обновляли и есть актуальные тарифы
         }
 
+        if (active.isEmpty()) {
         // перезагружаем тарифы с mos.ru (твоя логика)
         try {
             repository.deleteAllTariffs();
