@@ -22,7 +22,8 @@ import java.util.stream.Collectors;
 public class TariffService {
 
     private final TariffRepository repository;
- /**
+
+    /**
      * Конструктор сервиса.
      *
      * @param repository репозиторий для доступа к данным тарифов в БД
@@ -30,27 +31,28 @@ public class TariffService {
     public TariffService(TariffRepository repository) {
         this.repository = repository;
     }
+
     /**
      * Формирует строку с актуальными тарифами на водоснабжение и водоотведение,
      * сгруппированными по периодам действия.
-     *
+     * <p>
      * Показывает:
      * - Холодную воду (Мосводоканал)
      * - Горячую воду (МОЭК)
      * - Водоотведение (Мосводоканал)
-     *
+     * <p>
      * Группировка:
      * - Все тарифы группируются по периодам действия (startDate → endDate)
      * - Выводятся в хронологическом порядке
      * - Для каждого периода — список тарифов по поставщикам
-     *
+     * <p>
      * Пример вывода:
      * Актуальные тарифы ЖКУ (mos.ru)
      * с 01.04.2025 по 30.06.2025
-     *
+     * <p>
      * Холодная вода:
      * • 45.56 руб/м³ (Мосводоканал)
-     *
+     * <p>
      * ────────────
      *
      * @return отформатированная строка с тарифами и сроками действия, либо сообщение об отсутствии данных
@@ -64,7 +66,8 @@ public class TariffService {
         }
 
         // Группируем по периоду действия
-        record Period(LocalDate start, LocalDate end) {}
+        record Period(LocalDate start, LocalDate end) {
+        }
         Map<Period, List<Tariff>> byPeriod = active.stream()
                 .collect(Collectors.groupingBy(t -> new Period(t.getStartDate(), t.getEndDate())));
 
@@ -112,7 +115,7 @@ public class TariffService {
                 }
                 sb.append("\n");
             }
-            sb.append("────────────\n\n");
+            sb.append("────────────\n");
         }
 
         // Электричество оставляешь как сейчас, если хочешь отдельно:
@@ -135,7 +138,8 @@ public class TariffService {
             case MULTI_TARIFF -> "Многотарифный";
         };
     }
-        /**
+
+    /**
      * Преобразует тип плиты в читаемое название.
      *
      * @param stoveType тип плиты ("газовая", "электрическая" и т.п.)
@@ -148,10 +152,11 @@ public class TariffService {
         if (s.contains("электр")) return "Электроплита";
         return stoveType;
     }
+
     /**
      * Добавляет в StringBuilder информацию об актуальных тарифах на электроэнергию,
      * сгруппированных по периодам, поставщикам и типу плиты.
-     *
+     * <p>
      * Используется для полного вывода всех тарифов, включая электроэнергию.
      *
      * @param sb   буфер для формирования строки
@@ -162,7 +167,8 @@ public class TariffService {
         if (plans.isEmpty()) return;
 
         // Группируем по периоду действия
-        record Period(LocalDate start, LocalDate end) {}
+        record Period(LocalDate start, LocalDate end) {
+        }
         Map<Period, List<ElectricityPlan>> byPeriod = plans.stream()
                 .collect(Collectors.groupingBy(p -> new Period(p.getStartDate(), p.getEndDate())));
 
@@ -218,7 +224,7 @@ public class TariffService {
 
                         Set<String> seenKeys = new LinkedHashSet<>();
 
-                        if (seenKeys.add(key)) {
+                        if (seenKeys.add(key) == true) {
                             sb.append("   • ")
                                     .append(humanPlanType(pPlan.getType())).append(": ");
 
@@ -297,7 +303,6 @@ public class TariffService {
 
         return plans.stream()
                 .filter(p -> p.getProviderShort() != null
-                        && provider != null
                         && p.getProviderShort().equalsIgnoreCase(provider))
                 .filter(p -> {
                     if (stove == null || p.getStoveType() == null) return false;
@@ -341,12 +346,12 @@ public class TariffService {
 
     /**
      * Проверяет, что тарифы ещё не обновлялись в этом месяце — загружает актуальные тарифы с mos.ru.
-     *
+     * <p>
      * Процесс обновления:
      * - Удаляет все существующие тарифы и планы электроснабжения из репозитория
      * - Загружает новые данные через MosRuTariffLoader
      * - Фиксирует дату последнего обновления
-     *
+     * <p>
      * Обрабатывает ошибки сети или парсинга, не прерывая работу приложения.
      * Вызывается, например, при старте бота или по расписанию.
      */
@@ -361,19 +366,20 @@ public class TariffService {
         }
 
         if (active.isEmpty()) {
-        // перезагружаем тарифы с mos.ru (твоя логика)
-        try {
-            repository.deleteAllTariffs();
-            repository.deleteAllElectricityPlans();
-            MosRuTariffLoader.load(repository);
-            repository.setLastUpdateDate(today);
-        } catch (IOException e) {
-            // сеть / формат mos.ru
-            e.printStackTrace();
-            // можно sendText себе в личку или записать в лог-файл
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt(); // корректно помечаем поток
-            e.printStackTrace();
+            // перезагружаем тарифы с mos.ru (твоя логика)
+            try {
+                repository.deleteAllTariffs();
+                repository.deleteAllElectricityPlans();
+                MosRuTariffLoader.load(repository);
+                repository.setLastUpdateDate(today);
+            } catch (IOException e) {
+                // сеть / формат mos.ru
+                e.printStackTrace();
+                // можно sendText себе в личку или записать в лог-файл
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt(); // корректно помечаем поток
+                e.printStackTrace();
+            }
         }
     }
 }

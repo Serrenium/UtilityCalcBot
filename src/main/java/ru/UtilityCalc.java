@@ -63,31 +63,7 @@ public class UtilityCalc extends TelegramLongPollingBot {
         Long flatId;
         Long electricMeterId;
     }
-//
-//    enum AddFlatState {
-//        NONE,
-//        CONFIRM_DEFAULT_NAME,
-//        ENTERING_CUSTOM_NAME
-//    }
-//
-//    class AddFlatSession {
-//        AddFlatState state = AddFlatState.NONE;
-//        String tempName; // если понадобится
-//    }
-//    enum OnboardingState {
-//        NONE,
-//        ASKING_STOVE_TYPE,
-//        ASKING_ELECTRIC_METER_TYPE,
-//        ASKING_INITIAL_READINGS_WATER_COLD,
-//        ASKING_INITIAL_READINGS_WATER_HOT,
-//        ASKING_INITIAL_READINGS_ELECTRIC
-//    }
 
-//    class OnboardingSession {
-//        OnboardingState state = OnboardingState.NONE;
-//        Long defaultFlatId;
-//        Long electricMeterId;
-//    }
     enum CalcState {
         NONE,
         ASKING_COLD,
@@ -108,8 +84,6 @@ public class UtilityCalc extends TelegramLongPollingBot {
 
     private final Map<Long, AddMeterSession> addMeterSessions = new HashMap<>();
     private final Map<Long, AddFlatFlowSession> addFlatFlowSessions = new HashMap<>();
-//    private final Map<Long, AddFlatSession> addFlatSessions = new HashMap<>();
-//    private final Map<Long, OnboardingSession> onboardingSessions = new HashMap<>();
     private final Map<Long, CalcSession> calcSessions = new HashMap<>();
 
     public UtilityCalc(TariffService tariffService,
@@ -198,10 +172,10 @@ public class UtilityCalc extends TelegramLongPollingBot {
             } else if (command.startsWith("/deletemeter")) {
                 deleteMeter(chatId, text, msg);
 
-            } else if (text.equals("/dumpdb")) {
+            } else if (command.equals("/dumpdb")) {
                 if (!chatId.toString().equals("99604541")) { // замените на свой chatId
-                sendText(chatId, "Доступ запрещён.");
-                return;
+                    sendText(chatId, "Доступ запрещён.");
+                    return;
                 }
                 try (Connection c = Db.getConnection()) {
                     StringBuilder sb = new StringBuilder("📋 Содержимое базы:\n\n");
@@ -393,7 +367,6 @@ public class UtilityCalc extends TelegramLongPollingBot {
     private void handleCallback(Update update) throws TelegramApiException {
         String data = update.getCallbackQuery().getData();
         Long chatId = update.getCallbackQuery().getMessage().getChatId();
-        Integer messageId = update.getCallbackQuery().getMessage().getMessageId();
 
         AddFlatFlowSession flatFlow = addFlatFlowSessions.get(chatId);
 

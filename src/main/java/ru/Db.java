@@ -1,5 +1,9 @@
 package ru;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
@@ -69,8 +73,55 @@ public class Db {
                 )
                 """);
 
+            // 2. Импорт тарифов, если таблицы пустые
+            importTariffsIfEmpty(c);
+
         } catch (SQLException e) {
             throw new RuntimeException(e);
+        }
+    }
+
+    private static void importTariffsIfEmpty(Connection c) {
+        try (Statement st = c.createStatement()) {
+            // проверяем, есть ли уже тарифы
+            var rs = st.executeQuery("SELECT COUNT(*) FROM tariffs");
+            rs.next();
+            int count = rs.getInt(1);
+            rs.close();
+
+            if (count > 0) {
+                return; // уже что‑то есть — не импортируем повторно
+            }
+
+            // читаем tariff.sql из ресурсов
+            try (InputStream is = Db.class.getResourceAsStream("/tariff.sql")) {
+                if (is == null) {
+                    // файла нет в jar — тихо выходим
+                    return;
+                }
+                try (BufferedReader reader =
+                             new BufferedReader(new InputStreamReader(is))) {
+
+                    StringBuilder sb = new StringBuilder();
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        sb.append(line).append('\n');
+                    }
+
+                    String[] statements = sb.toString().split(";");
+
+                    for (String sql : statements) {
+                        String trimmed = sql.trim();
+                        if (trimmed.isEmpty()) continue;
+                        st.executeUpdate(trimmed);
+                    }
+                }
+            } catch (IOException e) {
+                throw new RuntimeException("Ошибка чтения tariff.sql", e);
+            }
+
+        } catch (SQLException e) {
+            throw new RuntimeException("Ошибка импорта тарифов из tariff.sql", e);
         }
     }
 
